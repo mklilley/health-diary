@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="How a self-hosted Health Diary installation processes and stores personal diary information.">
+  <title>Privacy policy · Health Diary</title>
+  <link rel="stylesheet" href="site.css">
+</head>
+<body>
+  <main>
+    <nav aria-label="Main navigation"><a href="index.html">Health Diary</a></nav>
+    <h1>Privacy policy</h1>
+    <p>This notice describes the standard self-hosted Health Diary installation. The person running your bot operates it and controls its server and connected service accounts.</p>
+    <h2>Information processed</h2>
+    <p>The bot records voice notes from its configured diary user. It stores the original audio, transcripts, entry and daily summaries, message dates, Telegram user and message identifiers, and processing records. Voice notes may contain health information and other personal details.</p>
+    <h2>How information is used and shared</h2>
+    <ul>
+      <li><strong>Telegram</strong> delivers voice notes, summaries, reminders and administrator messages. Bot chats are not end-to-end encrypted.</li>
+      <li><strong>OpenAI</strong> receives recordings for transcription and transcript text for entry and daily summaries.</li>
+      <li><strong>Google Drive and Sheets</strong> store the archive and its index in the authorised Google account. Archived information includes recordings, transcripts, summaries and processing metadata.</li>
+      <li><strong>The bot's server</strong> keeps local diary records and the credentials needed to operate the connected services.</li>
+    </ul>
+    <p>These services process information under their applicable terms and privacy policies. The bot uses diary information to record, summarise, retrieve and maintain the diary.</p>
+    <h2>Google account access</h2>
+    <p>The archive owner authorises the <code>drive.file</code> permission. This allows the app to access files created or authorised through it. Google account access is used to create and maintain the diary archive and index. The server stores a refresh token so it can continue this work without repeated sign-in.</p>
+    <h2>Who can access the diary</h2>
+    <p>The diary user receives entry summaries in Telegram. The configured administrator can view diary summaries through bot commands. The server operator and Google archive owner can access stored records. The archive starts private; any later sharing or server access is controlled by those account holders.</p>
+    <h2>Retention and deletion</h2>
+    <p>Diary records have no automatic expiry. The operator may configure local audio removal after successful transcription and archiving; the archived recording remains in Drive.</p>
+    <p>For a copy of your information or to request deletion, contact your bot's administrator. Deletion needs to cover the server, Drive files, Sheet entries and any backups. Deleting a Telegram message alone does not delete those copies. Copies held by service providers are subject to their own retention arrangements.</p>
+    <p>The archive owner can revoke Google access through <a href="https://myaccount.google.com/connections">Google Account connections</a>. Revoking access stops further authorised Google operations but does not delete existing diary records.</p>
+    <h2>Contact</h2>
+    <p>Contact the person who provided your bot for privacy questions, access or deletion requests. The Google archive owner can also use the support email shown during Google authorisation.</p>
+    <h2>This website</h2>
+    <p>These information pages contain no diary records, analytics scripts or sign-in forms. The website host may retain access logs under its own privacy policy.</p>
+  </main>
+</body>
+</html>
