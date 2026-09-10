@@ -59,7 +59,7 @@ export async function authorizeGoogle(config, { print = console.log, timeoutMs =
       access_type: 'offline', prompt: 'consent', scope: [GOOGLE_SCOPE],
       state, code_challenge: challenge, code_challenge_method: 'S256',
     });
-    print('Open this URL in your browser on this Mac. Sign in with the diary archive owner account:');
+    print('Open this URL in a browser on the same computer. Sign in with the diary archive owner account:');
     print(url);
     timeout = setTimeout(() => rejectCode(new ServiceError('google-auth', 'AUTHORIZATION_TIMEOUT')), timeoutMs);
     const code = await codePromise;
