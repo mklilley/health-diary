@@ -1,0 +1,12 @@
+[Unit]
+Description=Health diary reminder at 22:00 Europe/London
+
+[Timer]
+OnCalendar=*-*-* 22:00:00 Europe/London
+# A catch-up invocation is safe: the app never sends a previous day's reminder.
+Persistent=true
+AccuracySec=30s
+Unit=health-diary-reminder.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,11 @@
+[Unit]
+Description=Finalise health diary days at 02:00 Europe/London
+
+[Timer]
+OnCalendar=*-*-* 02:00:00 Europe/London
+Persistent=true
+AccuracySec=30s
+Unit=health-diary-daily.service
+
+[Install]
+WantedBy=timers.target

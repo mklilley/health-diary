@@ -1,0 +1,28 @@
+{
+  "name": "health-diary",
+  "version": "1.0.0",
+  "private": true,
+  "description": "A private, recoverable Telegram voice health diary backed by ordinary files",
+  "type": "module",
+  "engines": {
+    "node": ">=22.13.0 <27"
+  },
+  "scripts": {
+    "start": "node src/bot/bot.js",
+    "retry": "node src/jobs/retry.js",
+    "reminder": "node src/jobs/reminder.js",
+    "daily": "node src/jobs/daily.js",
+    "status": "node src/jobs/status.js",
+    "rebuild-status": "node src/jobs/rebuild-status.js",
+    "rebuild-aggregates": "node src/jobs/rebuild-aggregates.js",
+    "day": "node src/jobs/show-day.js",
+    "google-auth": "node src/jobs/google-auth.js",
+    "test": "node --test test/*.test.js",
+    "check": "node --check ecosystem.config.cjs && node --test test/*.test.js"
+  },
+  "dependencies": {
+    "googleapis": "^178.1.1",
+    "openai": "^7.13.0",
+    "proper-lockfile": "^4.1.2"
+  }
+}

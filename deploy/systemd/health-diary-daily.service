@@ -1,0 +1,22 @@
+[Unit]
+Description=Health diary completed-day finalisation and catch-up
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=health-diary
+Group=health-diary
+WorkingDirectory=/srv/health-diary
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+Environment=NODE_ENV=production
+Environment=TZ=Europe/London
+ExecStart=/usr/bin/env node src/jobs/daily.js
+UMask=0077
+TimeoutStartSec=45min
+TimeoutStopSec=180s
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/srv/health-diary/data /srv/health-diary/tokens

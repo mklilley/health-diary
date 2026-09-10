@@ -1,0 +1,12 @@
+[Unit]
+Description=Retry health diary operations every fifteen minutes
+
+[Timer]
+OnCalendar=*-*-* *:00/15:00 Europe/London
+Persistent=true
+AccuracySec=30s
+RandomizedDelaySec=30s
+Unit=health-diary-retry.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,23 @@
+[Unit]
+Description=Health diary current-day no-entry reminder
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=health-diary
+Group=health-diary
+WorkingDirectory=/srv/health-diary
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+Environment=NODE_ENV=production
+Environment=TZ=Europe/London
+# The application guards the current London date and its 22:00-24:00 window.
+ExecStart=/usr/bin/env node src/jobs/reminder.js
+UMask=0077
+TimeoutStartSec=45min
+TimeoutStopSec=180s
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/srv/health-diary/data /srv/health-diary/tokens
