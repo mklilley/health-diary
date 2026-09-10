@@ -73,13 +73,21 @@ Telegram retains queued updates for no more than 24 hours, and its standard bot 
 | Startup reports missing configuration | Fill the named setting in `.env`; restart the bot. |
 | Google authentication fails | Check consent, token expiry and archive permissions. Renew OAuth using the [setup guide](setup.md), then replace the server token while writers are stopped. |
 | OpenAI requests fail | Check API billing, key permissions and configured model access. |
-| Telegram polling conflicts | Stop other bot instances and remove any existing webhook. |
+| Telegram polling conflicts | Stop other bot instances. If reusing a bot from another application, see [below](#reusing-an-existing-telegram-bot). |
 | Bot cannot message an account | The account must press Start and must not have blocked the bot. Check its numeric ID. |
 | Daily summary stays waiting | Check pending transcripts and whether the bot is polling successfully. |
 | Archive operation remains pending | Restore provider access and retry; keep the local source files. |
 | Duplicate remote files or Sheet keys | Inspect matching objects and saved IDs before repairing them. |
 | Permission or lock error | Check the process account and data directory. Allow stale locks to recover after stopped processes. |
 | Disk full or corrupt files | Stop writers, preserve affected files, free space and restore known-good records from Drive where available. |
+
+## Reusing an existing Telegram bot
+
+Skip this section if you created a new bot for Health Diary.
+
+A previous application may have told Telegram to send messages to its server address. That setting is called a **webhook**. Health Diary instead asks Telegram for new messages itself, using **long polling**. Telegram does not allow both methods at once.
+
+Stop the previous application. If it configured a webhook, remove that setting using Telegram's [`deleteWebhook` method](https://core.telegram.org/bots/api#deletewebhook), with `drop_pending_updates=false`. This turns off the old forwarding address and keeps messages waiting for collection; it does not delete your bot.
 
 ## Uncertain Telegram delivery
 

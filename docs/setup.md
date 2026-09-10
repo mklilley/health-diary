@@ -6,6 +6,8 @@ Complete the installation commands in the README first. Edit `.env` in a text ed
 
 ## 1. Telegram
 
+**For a new bot, no webhook setup is needed.** If you're reusing a bot previously connected to another application, read [reusing an existing Telegram bot](operations.md#reusing-an-existing-telegram-bot) before continuing.
+
 1. Open [BotFather](https://t.me/BotFather) in Telegram, send `/newbot`, and follow the prompts. Put the resulting token in `TELEGRAM_BOT_TOKEN`.
 2. Have both the diary user and administrator open the new bot and press **Start**. These must be two distinct accounts.
 3. Before starting the application, run the following command from the repository directory to find their numeric IDs. It prints private-chat names and IDs, without printing message content or advancing the update offset.
@@ -42,8 +44,6 @@ Fill in these values in `.env`:
 | `TELEGRAM_ADMIN_USER_ID` | Numeric ID of the administrator. |
 
 If no users appear, send `/start` to the bot again and rerun the command. Do not run it alongside an active bot. You can also disable joining groups through BotFather's `/setjoingroups`; the application already ignores group messages.
-
-An existing webhook must be removed before long polling will work. When using Telegram's `deleteWebhook` method, keep `drop_pending_updates=false` to preserve queued messages. See the [Telegram bot documentation](https://core.telegram.org/bots/api).
 
 ## 2. OpenAI
 
