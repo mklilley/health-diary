@@ -2,7 +2,7 @@
 
 [Back to the README](../README.md)
 
-This guide targets Debian with systemd and also applies to Ubuntu. It runs one bot under PM2 and three scheduled jobs under systemd, using `/srv/health-diary` and a dedicated `health-diary` Unix account. No public web port, domain or reverse proxy is needed.
+This guide targets Debian with systemd and also applies to Ubuntu. It runs one bot under PM2 and three scheduled jobs under systemd, using `/srv/health-diary` and a dedicated `health-diary` Unix account. The bot itself needs no public web port or reverse proxy. Host Google's required [public information pages](setup.md#3-google-drive-and-sheets) separately from this private installation.
 
 Commands assume an administrator account with `sudo`. If logged in as root, omit `sudo` and use `su - health-diary` instead of `sudo -iu health-diary` when switching to the application account.
 

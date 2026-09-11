@@ -53,20 +53,21 @@ The example configuration selects `gpt-4o-transcribe` for transcription and `gpt
 
 ## 3. Google Drive and Sheets
 
-Use the Google account that should own the diary archive.
+Use the Google account that should own the diary archive. Complete these steps on a computer with a browser, outside the SSH session, using a local checkout with `npm ci` completed and `.env` prepared.
 
-For a headless installation, complete this section on your laptop or desktop, outside the SSH session. Use a local checkout of the repository with `npm ci` completed and `.env` prepared. You do not need to start the bot locally.
-
-1. Create a project in [Google Cloud Console](https://console.cloud.google.com/).
+1. Create or select a project in [Google Cloud Console](https://console.cloud.google.com/).
 2. Enable **Google Drive API** and **Google Sheets API**.
-3. Configure the OAuth consent screen. For a personal Google account, choose an external app and add the archive owner's account as a test user during setup.
-4. Create an OAuth client with application type **Desktop app**. Download its JSON and save it as `credentials/google-oauth-client.json`.
-5. Run `npm run google-auth` on a computer with a browser. Open its printed URL on the same computer, sign in, and approve access.
-6. Copy the printed `GOOGLE_DRIVE_ROOT_FOLDER_ID` and `GOOGLE_SHEET_ID` into `.env`.
+3. Open **Google Auth Platform**. Set the app name (for example, **Health Diary**), choose a support email address you monitor, select **External** for the audience, and enter your developer contact email.
+4. Prepare the public pages required for publishing. The repository includes [docs/index.html](index.html), [docs/privacy.html](privacy.html) and [docs/site.css](site.css). Review the privacy policy and host copies of these three files in a public web directory, separate from the bot's private files.
+5. In **Branding**, enter the published HTTPS homepage and privacy-policy URLs. Add the site's domain under **Authorized domains**, complete any ownership check Google requests, and save.
+6. In **Audience → Publishing status**, click **Publish app → Confirm**. Check the status is **In production before authorising below**: refresh tokens issued in **Testing expire after seven days** for this app. See [Google's publishing-status guidance](https://support.google.com/cloud/answer/15549945).
+7. In **Clients**, create an OAuth client with application type **Desktop app**. Download its JSON and save it as `credentials/google-oauth-client.json`.
+8. Run `npm run google-auth`. Open its printed URL in a browser on the same computer, sign in with the archive owner's Google account, and approve access.
+9. Copy the printed `GOOGLE_DRIVE_ROOT_FOLDER_ID` and `GOOGLE_SHEET_ID` into `.env`.
 
-The helper saves a refresh token in `tokens/google-token.json` and creates a private **Health Diary** folder containing a **Diary Index** Sheet. It requests only the `drive.file` scope, for files created or authorised through this app. Use the helper-created folder and Sheet; arbitrary existing resources may be inaccessible with this scope.
+The helper saves a refresh token in `tokens/google-token.json` and creates a private **Health Diary** folder containing a **Diary Index** Sheet. Use these generated resources: the `drive.file` permission limits access to files created or authorised through this app.
 
-For unattended use, move the OAuth consent app from **Testing** to **Production**. Refresh tokens for an external app in Testing normally expire after seven days with these scopes. See Google's [OAuth setup](https://developers.google.com/identity/protocols/oauth2/native-app), [scope guidance](https://developers.google.com/workspace/drive/api/guides/api-specific-auth), and [token expiration rules](https://developers.google.com/identity/protocols/oauth2#expiration).
+**Already authorised in Testing?** After publishing, rerun `npm run google-auth` to obtain a token issued in Production. Keep the same OAuth client and existing archive IDs in `.env`, then transfer the updated `tokens/google-token.json` to the server. If the bot and jobs are running, stop them before replacing the token and restart them afterwards.
 
 ### Headless servers
 
@@ -76,7 +77,7 @@ The Debian server does not need a browser or desktop environment. After completi
 2. Put the helper's printed `GOOGLE_DRIVE_ROOT_FOLDER_ID` and `GOOGLE_SHEET_ID` in the **server's** `.env`.
 3. Start the bot on the server. It refreshes Google access automatically using the saved token; no browser is needed for normal operation or restarts.
 
-The setup helper receives Google's sign-in callback on `127.0.0.1`, so run the helper and browser on the same computer for this setup. Choosing a **Desktop app** OAuth client enables this setup flow; it does not require the production bot to run on a desktop. Repeat authorisation only if access expires or is revoked, then replace the server token while writers are stopped.
+There is no need to start the bot immediately after switching to Production. Production refresh tokens have no fixed seven-day expiry, but can still stop working, for example after access is revoked or the token goes unused for six months. See [Google's token-expiration rules](https://developers.google.com/identity/protocols/oauth2#expiration).
 
 ## Start and verify
 
