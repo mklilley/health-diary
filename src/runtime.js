@@ -6,7 +6,10 @@ import { createDiary } from './diary/index.js';
 import { log, safeError } from './util/logging.js';
 
 export function isMain(url) {
-  return Boolean(process.argv[1]) && resolve(process.argv[1]) === fileURLToPath(url);
+  // PM2 imports the app through its own launcher, so argv[1] is the wrapper.
+  // It provides the actual application entrypoint in pm_exec_path.
+  const entrypoint = process.env.pm_exec_path || process.argv[1];
+  return Boolean(entrypoint) && resolve(entrypoint) === fileURLToPath(url);
 }
 
 export function reportFailure(event, error, fields = {}) {

@@ -1,15 +1,53 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { createRequire } from 'node:module';
 
 const execute = promisify(execFile);
 const root = fileURLToPath(new URL('../', import.meta.url));
+
+test('PM2 wrapper launches the configured entrypoint', async t => {
+  const cwd = await mkdtemp(join(tmpdir(), 'health-diary-pm2-'));
+  t.after(() => rm(cwd, { recursive: true, force: true }));
+  const wrapper = join(cwd, 'ProcessContainerFork.cjs');
+  // PM2 imports its configured script without changing process.argv[1].
+  await writeFile(wrapper, "import(require('node:url').pathToFileURL(process.env.pm_exec_path));\n");
+  const launch = script => execute(process.execPath, [wrapper], {
+    cwd,
+    env: { PATH: process.env.PATH, DATA_DIR: join(cwd, 'data'), pm_exec_path: join(root, script) },
+    timeout: 15_000,
+  });
+  // No credentials: reaching configuration validation proves main() ran,
+  // without contacting Telegram, Google or OpenAI.
+  await assert.rejects(launch('src/bot/bot.js'), error => {
+    assert.match(error.stderr, /Missing required configuration: TELEGRAM_DIARY_USER_ID/);
+    return error.code === 1;
+  });
+  assert.match((await launch('src/jobs/status.js')).stdout, /# Health Diary Status/);
+});
+
+test('importing bot and job modules does not start them', async t => {
+  const cwd = await mkdtemp(join(tmpdir(), 'health-diary-import-'));
+  t.after(() => rm(cwd, { recursive: true, force: true }));
+  const importer = join(cwd, 'importer.mjs');
+  await writeFile(importer, ['src/bot/bot.js', 'src/jobs/status.js']
+    .map(script => `await import(${JSON.stringify(pathToFileURL(join(root, script)).href)});`)
+    .join('\n'));
+  for (const pm2Env of [{}, { pm_exec_path: importer }]) {
+    const result = await execute(process.execPath, [importer], {
+      cwd,
+      env: { PATH: process.env.PATH, DATA_DIR: join(cwd, 'data'), ...pm2Env },
+      timeout: 15_000,
+    });
+    assert.equal(result.stdout, '');
+    assert.equal(result.stderr, '');
+  }
+});
 
 test('offline job entrypoints run from a clean environment and rebuild disposable views', async t => {
   const cwd = await mkdtemp(join(tmpdir(), 'health-diary-runtime-'));
