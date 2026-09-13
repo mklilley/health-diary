@@ -82,6 +82,8 @@ pm2 logs health-diary-bot --lines 50
 
 Run the privileged command printed by `pm2 startup` from an administrator shell. It should target the `health-diary` user. PM2 creates its own boot service; no separate bot service is needed. Send a test voice note and check `/status` before proceeding.
 
+PM2 watches `src/`, including the AI prompts, and waits two seconds before restarting after a change. Changes to `.env`, dependencies or the PM2 configuration require an explicit restart. For updates involving multiple files or dependencies, follow the procedure below to finish the update and apply the ecosystem settings before restarting.
+
 ## 4. Enable the scheduled jobs
 
 From a server administrator shell:
@@ -114,18 +116,18 @@ Confirm `/status`, timer logs and PM2 startup after a reboot. See [troubleshooti
 
 Preserve `data/`, `.env`, `credentials/` and `tokens/`. Do not replace the entire project directory or copy another installation's runtime files over it.
 
-First stop scheduling and active jobs, then stop the bot. From an administrator shell:
+First stop scheduling and active jobs, then stop the bot with file watching disabled. From an administrator shell:
 
 ```bash
 sudo systemctl stop health-diary-retry.timer health-diary-reminder.timer health-diary-daily.timer
 sudo systemctl stop health-diary-retry.service health-diary-reminder.service health-diary-daily.service
 sudo -iu health-diary
 cd /srv/health-diary
-pm2 stop health-diary-bot
+pm2 stop health-diary-bot --watch
 git status --short
 ```
 
-Inspect local changes before pulling and resolve them deliberately if needed. Then, as `health-diary`:
+The `--watch` flag disables watching while the bot is stopped; otherwise file changes can start it again. See [PM2's watch documentation](https://pm2.keymetrics.io/docs/usage/watch-and-restart/). Inspect local changes before pulling and resolve them deliberately if needed. Then, as `health-diary`:
 
 ```bash
 git pull --ff-only
@@ -136,10 +138,11 @@ npm run status
 
 Review new configuration options; do not overwrite `.env` with the example. If unit files changed, verify and reinstall them using step 4.
 
-As `health-diary`, restart the bot:
+As `health-diary`, recreate the PM2 process registration to initialise watching from the ecosystem file. `pm2 delete` removes the process registration; it does not delete application or diary files:
 
 ```bash
-pm2 restart ecosystem.config.cjs --only health-diary-bot --update-env
+pm2 delete health-diary-bot
+pm2 start ecosystem.config.cjs --only health-diary-bot
 pm2 save
 ```
 
