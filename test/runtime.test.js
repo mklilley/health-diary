@@ -24,7 +24,7 @@ test('offline job entrypoints run from a clean environment and rebuild disposabl
   assert.match(await readFile(join(cwd, 'data', 'aggregates', 'all-transcripts.md'), 'utf8'), /^# All transcripts/);
   await assert.rejects(job('show-day', ['2026-02-30']), error => error.code === 1);
   await assert.rejects(execute(process.execPath, [join(root, 'src/bot/bot.js')], { cwd, env }), error => {
-    assert.match(error.stderr, /Missing required configuration: TELEGRAM_SISTER_USER_ID/);
+    assert.match(error.stderr, /Missing required configuration: TELEGRAM_DIARY_USER_ID/);
     return error.code === 1;
   });
 });

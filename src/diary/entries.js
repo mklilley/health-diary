@@ -9,7 +9,7 @@ import { version as transcriptionPromptVersion, transcriptionOptions } from '../
 
 export async function receiveVoice(ctx, message) {
   const { config, store } = ctx;
-  if (message?.from?.id !== config.sisterUserId || message.chat?.type !== 'private' || message.chat.id !== config.sisterUserId
+  if (message?.from?.id !== config.diaryUserId || message.chat?.type !== 'private' || message.chat.id !== config.diaryUserId
     || !Number.isSafeInteger(message.message_id) || message.message_id <= 0 || !Number.isSafeInteger(message.date)
     || !message.voice?.file_id || typeof message.voice.file_id !== 'string') throw new Error('Invalid diary voice message');
   const { entries, issues } = await store.scan();

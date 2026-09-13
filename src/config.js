@@ -42,10 +42,10 @@ export function loadConfig({ requireSecrets = true, env = process.env, cwd = pro
   };
   const timezone = value('TIMEZONE', 'Europe/London');
   if (timezone !== 'Europe/London') throw new ConfigurationError('TIMEZONE must be Europe/London for this diary.');
-  const sisterUserId = userId('TELEGRAM_SISTER_USER_ID');
+  const diaryUserId = userId('TELEGRAM_DIARY_USER_ID');
   const adminUserId = userId('TELEGRAM_ADMIN_USER_ID');
-  if (sisterUserId !== null && sisterUserId === adminUserId) {
-    throw new ConfigurationError('The sister and admin must have distinct Telegram user IDs.');
+  if (diaryUserId !== null && diaryUserId === adminUserId) {
+    throw new ConfigurationError('The diary user and admin must have distinct Telegram user IDs.');
   }
   const diaryStartDate = value('DIARY_START_DATE') || null;
   if (diaryStartDate && (!/^\d{4}-\d{2}-\d{2}$/.test(diaryStartDate)
@@ -60,7 +60,7 @@ export function loadConfig({ requireSecrets = true, env = process.env, cwd = pro
   }
   return Object.freeze({
     dataDir: resolve(cwd, value('DATA_DIR', 'data')),
-    timezone, sisterUserId, adminUserId,
+    timezone, diaryUserId, adminUserId,
     telegramBotToken: required('TELEGRAM_BOT_TOKEN'),
     openaiApiKey: required('OPENAI_API_KEY'),
     transcriptionModel: value('TRANSCRIPTION_MODEL', 'gpt-4o-transcribe'),

@@ -16,7 +16,7 @@ async function fixture(t, initial = '2026-09-09T12:00:00Z') {
   let telegramId = 1000;
   const calls = [], sent = [], folders = new Map(), files = new Map(), rows = new Map(), days = new Map(), faults = new Map();
   const config = {
-    dataDir, timezone: 'Europe/London', sisterUserId: 101, adminUserId: 202,
+    dataDir, timezone: 'Europe/London', diaryUserId: 101, adminUserId: 202,
     transcriptionModel: 'test-transcription', entrySummaryModel: 'test-entry', dailySummaryModel: 'test-day',
     googleDriveRootFolderId: 'private-test-root', googleSheetId: 'private-test-sheet',
     diaryStartDate: '2026-09-09', immediateAttempts: 3, retryBaseMs: 0,
@@ -91,7 +91,7 @@ async function fixture(t, initial = '2026-09-09T12:00:00Z') {
   };
 }
 
-test('normal sister voice preserves primary files and reuses one exact summary in every destination', async (t) => {
+test('normal diary user voice preserves primary files and reuses one exact summary in every destination', async (t) => {
   const f = await fixture(t);
   const receipt = await handleUpdate({ message: f.voice() }, f);
   const path = f.entryDirectory(receipt);
@@ -271,7 +271,7 @@ test('today remains a list of existing entry summaries until finalisation; viewi
   assert.equal(f.count('summarizeDay'), 0);
 });
 
-test('reminder sends once after 22:00; sister text and admin activity do not suppress it', async (t) => {
+test('reminder sends once after 22:00; diary user text and admin activity do not suppress it', async (t) => {
   const f = await fixture(t, '2026-09-09T21:05:00Z');
   await handleUpdate({ message: { ...f.voice(), voice: undefined, text: 'Synthetic interaction' } }, f);
   await handleUpdate({ message: { ...f.voice(), from: { id: 202 }, chat: { id: 202, type: 'private' } } }, f);

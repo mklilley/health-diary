@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { loadConfig } from '../src/config.js';
 
 const env = {
-  TELEGRAM_SISTER_USER_ID: '1001', TELEGRAM_ADMIN_USER_ID: '1002',
+  TELEGRAM_DIARY_USER_ID: '1001', TELEGRAM_ADMIN_USER_ID: '1002',
   TELEGRAM_BOT_TOKEN: 'test-only', OPENAI_API_KEY: 'test-only',
   GOOGLE_DRIVE_ROOT_FOLDER_ID: 'root-test', GOOGLE_SHEET_ID: 'sheet-test',
 };
@@ -13,7 +13,7 @@ test('configuration resolves paths and keeps required defaults centralized', () 
   assert.equal(config.dataDir, '/tmp/test-diary/data');
   assert.equal(config.googleTokenFile, '/tmp/test-diary/tokens/google-token.json');
   assert.equal(config.googleCredentialsFile, '/tmp/test-diary/credentials/google-oauth-client.json');
-  assert.equal(config.sisterUserId, 1001);
+  assert.equal(config.diaryUserId, 1001);
   assert.equal(config.adminUserId, 1002);
   assert.equal(config.timezone, 'Europe/London');
   assert.equal(config.immediateAttempts, 3);
@@ -25,7 +25,7 @@ test('configuration resolves paths and keeps required defaults centralized', () 
 
 test('offline commands can load config without provider secrets', () => {
   const config = loadConfig({ env: {}, requireSecrets: false });
-  assert.equal(config.sisterUserId, null);
+  assert.equal(config.diaryUserId, null);
   assert.equal(config.openaiApiKey, '');
   assert.equal(config.diaryStartDate, null);
 });
@@ -36,7 +36,7 @@ test('missing required settings fail without disclosing secrets', () => {
 
 test('authorization IDs must be distinct, positive safe integers', () => {
   for (const bad of ['-1', '0', '1.2', '1e3', '9007199254740992', 'secret-input']) {
-    assert.throws(() => loadConfig({ env: { ...env, TELEGRAM_SISTER_USER_ID: bad } }), /positive, safe numeric/);
+    assert.throws(() => loadConfig({ env: { ...env, TELEGRAM_DIARY_USER_ID: bad } }), /positive, safe numeric/);
   }
   assert.throws(() => loadConfig({ env: { ...env, TELEGRAM_ADMIN_USER_ID: '1001' } }), /distinct/);
 });

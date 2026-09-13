@@ -139,7 +139,7 @@ export async function sendReminder(ctx) {
     return { sent: false, reason: 'stale' };
   }
   try {
-    const result = await ctx.services.telegram.sendMessage(ctx.config.sisterUserId,
+    const result = await ctx.services.telegram.sendMessage(ctx.config.diaryUserId,
       "You haven't recorded anything today. When you have a moment, please send me a voice note about what you've eaten and how you've been feeling today.");
     day.reminder.status = 'complete';
     day.reminder.telegram_message_id = result.message_id;

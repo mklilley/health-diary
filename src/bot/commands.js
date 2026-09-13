@@ -1,6 +1,6 @@
 import { addDays, localDate, validateDate } from '../util/dates.js';
 
-export const SISTER_HELP = 'Send a voice note about what you have eaten and how you have been feeling. I will keep the recording and reply with a short summary. Send corrections as a new voice note. Text messages are not added to your diary.';
+export const DIARY_USER_HELP = 'Send a voice note about what you have eaten and how you have been feeling. I will keep the recording and reply with a short summary. Send corrections as a new voice note. Text messages are not added to your diary.';
 export const ADMIN_HELP = [
   'Health Diary admin commands:',
   '/status — current operational status',
@@ -23,8 +23,8 @@ export function parseCommand(text) {
 /** Only the admin branch can reach a diary read or maintenance operation. */
 export async function commandReply(text, { role, app, now = () => new Date() }) {
   const command = parseCommand(text);
-  if (role === 'sister') {
-    if (command?.name === 'help' || command?.name === 'start') return SISTER_HELP;
+  if (role === 'diary_user') {
+    if (command?.name === 'help' || command?.name === 'start') return DIARY_USER_HELP;
     return 'Please send diary entries as voice notes. Type /help for help.';
   }
   if (role !== 'admin') return null;

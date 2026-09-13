@@ -40,8 +40,10 @@ Fill in these values in `.env`:
 | Setting | Value |
 | --- | --- |
 | `TELEGRAM_BOT_TOKEN` | Token from BotFather. |
-| `TELEGRAM_SISTER_USER_ID` | Numeric ID of the diary user. This is the existing configuration name for that role. |
+| `TELEGRAM_DIARY_USER_ID` | Numeric ID of the diary user. |
 | `TELEGRAM_ADMIN_USER_ID` | Numeric ID of the administrator. |
+
+When updating an existing installation, set `TELEGRAM_DIARY_USER_ID` in `.env` to the diary user's existing numeric ID before restarting the bot.
 
 If no users appear, send `/start` to the bot again and rerun the command. Do not run it alongside an active bot. You can also disable joining groups through BotFather's `/setjoingroups`; the application already ignores group messages.
 

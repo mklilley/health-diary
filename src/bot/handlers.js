@@ -5,13 +5,13 @@ export function messageRole(message, config) {
   if (!Number.isSafeInteger(message.from?.id) || !Number.isSafeInteger(message.chat?.id)) return null;
   // All replies containing diary material go to the authenticated private user.
   if (message.chat.id !== message.from.id) return null;
-  if (message.from.id === config.sisterUserId) return 'sister';
+  if (message.from.id === config.diaryUserId) return 'diary_user';
   if (message.from.id === config.adminUserId) return 'admin';
   return null;
 }
 
 export function isDiaryVoice(update, config) {
-  return messageRole(update?.message, config) === 'sister' && Boolean(update.message.voice);
+  return messageRole(update?.message, config) === 'diary_user' && Boolean(update.message.voice);
 }
 
 /** Edited messages, channel posts, groups and unknown senders are ignored. */

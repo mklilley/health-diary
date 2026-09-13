@@ -4,10 +4,10 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { handleUpdate } from '../src/bot/handlers.js';
-import { commandReply, SISTER_HELP } from '../src/bot/commands.js';
+import { commandReply, DIARY_USER_HELP } from '../src/bot/commands.js';
 import { runBot } from '../src/bot/bot.js';
 
-const config = { sisterUserId: 101, adminUserId: 202, timezone: 'Europe/London' };
+const config = { diaryUserId: 101, adminUserId: 202, timezone: 'Europe/London' };
 const now = () => new Date('2026-06-01T23:30:00Z');
 function message(userId, body = {}) {
   return { message_id: 7, date: 1_780_357_200, chat: { id: userId, type: 'private' }, from: { id: userId }, ...body };
@@ -30,7 +30,7 @@ function mocks() {
   };
 }
 
-test('sister voice creates a receipt before processing; deferred mode only creates the receipt', async () => {
+test('diary user voice creates a receipt before processing; deferred mode only creates the receipt', async () => {
   const dependencies = mocks();
   const update = { message: message(101, { voice: { file_id: 'voice-file' } }) };
   assert.deepEqual(await handleUpdate(update, dependencies), { entry_id: 'entry-7' });
@@ -40,7 +40,7 @@ test('sister voice creates a receipt before processing; deferred mode only creat
   assert.deepEqual(dependencies.calls, [['receive', 7]]);
 });
 
-test('sister text and admin voice are bot interactions only', async () => {
+test('diary user text and admin voice are bot interactions only', async () => {
   const dependencies = mocks();
   await handleUpdate({ message: message(101, { text: 'An ordinary message' }) }, dependencies);
   await handleUpdate({ message: message(202, { voice: { file_id: 'admin-file' } }) }, dependencies);
@@ -66,15 +66,15 @@ test('unknown users, groups, edited messages, channels and bot senders cannot ac
   assert.deepEqual(dependencies.calls, []);
 });
 
-test('sister cannot invoke any admin command, including bot-addressed commands', async () => {
+test('diary user cannot invoke any admin command, including bot-addressed commands', async () => {
   const dependencies = mocks();
   for (const text of ['/status', '/retry', '/day 2026-06-01', '/today', '/yesterday', '/last', '/status@DiaryBot']) {
     await handleUpdate({ message: message(101, { text }) }, dependencies);
   }
   assert.ok(dependencies.calls.every(([operation, recipient, text]) => operation === 'send' && recipient === 101 && /voice notes/.test(text)));
-  assert.equal(await commandReply('/help', { ...dependencies, role: 'sister' }), SISTER_HELP);
-  assert.equal(await commandReply('/start', { ...dependencies, role: 'sister' }), SISTER_HELP);
-  assert.doesNotMatch(SISTER_HELP, /\/retry|\/status|\/day/);
+  assert.equal(await commandReply('/help', { ...dependencies, role: 'diary_user' }), DIARY_USER_HELP);
+  assert.equal(await commandReply('/start', { ...dependencies, role: 'diary_user' }), DIARY_USER_HELP);
+  assert.doesNotMatch(DIARY_USER_HELP, /\/retry|\/status|\/day/);
 });
 
 test('admin commands use stored views, strict ISO dates and London calendar dates', async () => {
