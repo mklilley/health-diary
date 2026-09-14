@@ -4,7 +4,7 @@
 
 ## Routine commands
 
-Run these from the repository directory. On a server, use the `health-diary` Unix account for npm and PM2 commands.
+Run these from the repository directory, as the same Unix account that runs the bot.
 
 ```bash
 npm run status
@@ -17,7 +17,11 @@ pm2 logs health-diary-bot --lines 50
 pm2 restart health-diary-bot
 ```
 
-The status, day and rebuild commands work without cloud credentials. `npm run retry` respects saved retry times; Telegram's `/retry` forces an immediate pass. To inspect scheduled jobs from an administrator shell:
+The status, day and rebuild commands work without cloud credentials. `npm run retry` respects saved retry times; Telegram's `/retry` forces an immediate pass.
+
+For [cron installations](cron.md), inspect `logs/cron.log`. Use `npm run cron:pause` before maintenance and `npm run cron:resume` afterwards. The pause command waits for any active scheduled pass to finish.
+
+For systemd installations, inspect scheduled jobs from an administrator shell:
 
 ```bash
 systemctl list-timers 'health-diary-*'
@@ -109,4 +113,4 @@ Remote metadata is a snapshot and may lag local delivery reservations. Review un
 
 ## Checks before relying on an installation
 
-`npm test` uses mocked providers. With the intended accounts, verify a short voice note reaches all destinations with the same summary, role restrictions work, corrections append new records, and a restart resumes pending work. On the server, check a real reminder and daily summary, timer logs, private archive permissions, and PM2 startup after reboot.
+`npm test` uses mocked providers. With the intended accounts, verify a short voice note reaches all destinations with the same summary, role restrictions work, corrections append new records, and a restart resumes pending work. On the server, check a real reminder and daily summary, scheduled-job logs, private archive permissions, and PM2 startup after reboot.

@@ -54,13 +54,13 @@ npm start
 
 Both Telegram users must open the bot and press **Start**. Send a voice note from the diary user's account; the bot should reply with `Recorded ✓` and a summary. Send `/status` from the administrator's account to check processing.
 
-The bot runs until you stop it with Ctrl-C. For continuous operation, automatic retries, daily summaries and reminders, follow [server deployment](docs/deployment.md). Run only one copy with a given bot token.
+The bot runs until you stop it with Ctrl-C. For continuous operation, automatic retries, daily summaries and reminders, follow [server deployment](docs/deployment.md). If PM2 is already running under your own account, add [scheduled jobs with cron](docs/cron.md), without sudo. Run only one copy with a given bot token.
 
 ## Using the diary
 
 Only the diary user's **voice notes** create entries. Text messages and administrator recordings are not stored as diary entries. Send corrections as new voice notes; previous entries stay unchanged.
 
-With scheduled jobs installed, the bot sends a no-entry reminder at **22:00** and summarises the previous day at **02:00**, London time.
+With scheduled jobs installed, the bot checks for a no-entry reminder from **22:00** and summarises the previous day from **02:00**, London time. Processing or downtime can delay completion.
 
 | Administrator command | Purpose |
 | --- | --- |

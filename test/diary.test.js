@@ -9,7 +9,7 @@ import { handleUpdate } from '../src/bot/handlers.js';
 
 // Synthetic source strings deliberately contain no real diary/health material.
 const AUDIO = Buffer.from('OggS-synthetic-test-audio');
-async function fixture(t, initial = '2026-09-09T12:00:00Z') {
+async function fixture(t, initial = '2026-09-09T12:00:00Z', diaryStartDate = '2026-09-09') {
   const dataDir = await mkdtemp(join(tmpdir(), 'health-diary-core-test-'));
   t.after(() => rm(dataDir, { recursive: true, force: true }));
   let instant = new Date(initial);
@@ -19,7 +19,7 @@ async function fixture(t, initial = '2026-09-09T12:00:00Z') {
     dataDir, timezone: 'Europe/London', diaryUserId: 101, adminUserId: 202,
     transcriptionModel: 'test-transcription', entrySummaryModel: 'test-entry', dailySummaryModel: 'test-day',
     googleDriveRootFolderId: 'private-test-root', googleSheetId: 'private-test-sheet',
-    diaryStartDate: '2026-09-09', immediateAttempts: 3, retryBaseMs: 0,
+    diaryStartDate, immediateAttempts: 3, retryBaseMs: 0,
     retryIntervalMs: 0, attentionAfterMs: 3_600_000, retainLocalAudio: true,
   };
   const record = (operation, args) => { calls.push({ operation, args }); };
@@ -283,6 +283,35 @@ test('reminder sends once after 22:00; diary user text and admin activity do not
   f.setNow('2026-09-10T08:00:00Z');
   assert.equal((await f.app.reminder()).sent, false);
   assert.equal(f.sent.filter(message => /haven't recorded/.test(message.text)).length, 1);
+});
+
+test('retry alone checks reminders and finalises overdue days on London time in GMT and BST', async t => {
+  for (const [date, nextDate, offset] of [
+    ['2026-01-09', '2026-01-10', '+00:00'],
+    ['2026-09-09', '2026-09-10', '+01:00'],
+  ]) {
+    const f = await fixture(t, `${date}T21:45:00${offset}`, date);
+    await f.app.recordPoll();
+    await f.app.retry();
+    assert.equal(f.sent.filter(message => /haven't recorded/.test(message.text)).length, 0);
+    // Simulate a missed 22:00 run: the next quarter-hour checks the reminder.
+    f.setNow(`${date}T22:15:00${offset}`);
+    await f.app.recordPoll();
+    await f.app.retry();
+    await f.app.retry();
+    assert.equal(f.sent.filter(message => /haven't recorded/.test(message.text)).length, 1);
+    f.setNow(`${nextDate}T01:45:00${offset}`);
+    await f.app.recordPoll();
+    await f.app.retry();
+    assert.notEqual((await f.day(date)).steps.daily_summary.status, 'complete');
+    // Simulate downtime through 02:00; retry catches up without the daily job.
+    f.setNow(`${nextDate}T03:15:00${offset}`);
+    await f.app.recordPoll();
+    await f.app.retry();
+    assert.equal((await f.day(date)).steps.daily_summary.status, 'complete');
+    assert.equal(f.days.get(date).entryCount, 0);
+    assert.equal(f.sent.filter(message => /haven't recorded/.test(message.text)).length, 1);
+  }
 });
 
 test('a durable voice receipt suppresses the reminder even before audio download or transcription', async (t) => {

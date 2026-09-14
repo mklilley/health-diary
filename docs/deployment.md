@@ -2,6 +2,8 @@
 
 [Back to the README](../README.md)
 
+**Already running the bot under your own account?** Use [scheduled jobs with cron](cron.md) for setup and updates without sudo. The guide below is the alternative deployment with a dedicated account and systemd timers.
+
 This guide targets Debian with systemd and also applies to Ubuntu. It runs one bot under PM2 and three scheduled jobs under systemd, using `/srv/health-diary` and a dedicated `health-diary` Unix account. The bot itself needs no public web port or reverse proxy. Host Google's required [public information pages](setup.md#3-google-drive-and-sheets) separately from this private installation.
 
 Commands assume an administrator account with `sudo`. If logged in as root, omit `sudo` and use `su - health-diary` instead of `sudo -iu health-diary` when switching to the application account.
@@ -86,6 +88,8 @@ PM2 watches `src/`, including the AI prompts, and waits two seconds before resta
 
 ## 4. Enable the scheduled jobs
 
+For scheduling under an existing account without sudo, follow [the cron guide](cron.md) instead of this section. Enable only one scheduler.
+
 From a server administrator shell:
 
 ```bash
@@ -113,6 +117,8 @@ The services run as `health-diary`, load the same `.env` as the bot, and can wri
 Confirm `/status`, timer logs and PM2 startup after a reboot. See [troubleshooting](operations.md) if processing remains incomplete.
 
 ## Updating an installation
+
+Cron installations should use [the cron update procedure](cron.md#updating-an-installation). The commands below apply to systemd timers.
 
 Preserve `data/`, `.env`, `credentials/` and `tokens/`. Do not replace the entire project directory or copy another installation's runtime files over it.
 

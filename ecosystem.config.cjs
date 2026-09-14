@@ -1,4 +1,4 @@
-// Run PM2 as the same unprivileged account used by the systemd jobs.
+// Run PM2 as the same unprivileged account used by the scheduled jobs.
 // The app loads .env itself; secrets are deliberately absent from PM2's config.
 module.exports = {
   apps: [{

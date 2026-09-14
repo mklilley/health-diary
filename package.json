@@ -10,6 +10,10 @@
   "scripts": {
     "start": "node src/bot/bot.js",
     "retry": "node src/jobs/retry.js",
+    "cron": "node src/jobs/cron.js",
+    "cron:print": "node src/jobs/cron.js --print",
+    "cron:pause": "node src/jobs/cron.js --pause",
+    "cron:resume": "node src/jobs/cron.js --resume",
     "reminder": "node src/jobs/reminder.js",
     "daily": "node src/jobs/daily.js",
     "status": "node src/jobs/status.js",
