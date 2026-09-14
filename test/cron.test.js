@@ -9,6 +9,10 @@ import { promisify } from 'node:util';
 import { cronLine, pauseCron, resumeCron, runCron } from '../src/jobs/cron.js';
 
 const execute = promisify(execFile);
+// Starting a runner imports the provider SDKs as well as the application.
+// Allow for a busy server running the whole suite; this is not a speed test.
+const startupTimeoutMs = 30_000;
+const fixtureRunTimeoutMs = 45_000;
 
 async function fixture(t, source) {
   const directory = await realpath(await mkdtemp(join(tmpdir(), 'health-diary-cron-')));
@@ -19,13 +23,30 @@ async function fixture(t, source) {
   return root;
 }
 
-async function waitFor(path) {
-  for (let attempt = 0; attempt < 300; attempt++) {
+async function waitFor(path, { running, logPath } = {}) {
+  let outcome;
+  running?.then(result => { outcome = { result }; }, error => { outcome = { error }; });
+  const deadline = performance.now() + startupTimeoutMs;
+  while (performance.now() < deadline) {
+    if (outcome) {
+      let log = '';
+      if (logPath) {
+        try { log = await readFile(logPath, 'utf8'); }
+        catch (error) { if (error.code !== 'ENOENT') throw error; }
+      }
+      const { result, error } = outcome;
+      assert.fail(`Process exited before creating ${path}\n${JSON.stringify({
+        code: error?.code ?? result?.code ?? 0,
+        signal: error?.signal ?? result?.signal,
+        stdout: error?.stdout ?? result?.stdout,
+        stderr: error?.stderr ?? result?.stderr,
+      })}\n${log}`);
+    }
     try { await stat(path); return; }
     catch (error) { if (error.code !== 'ENOENT') throw error; }
-    await delay(10);
+    await delay(25);
   }
-  assert.fail(`Timed out waiting for ${path}`);
+  assert.fail(`Timed out after ${startupTimeoutMs}ms waiting for ${path}`);
 }
 
 test('generated cron command preserves shell-sensitive paths in a minimal environment', async t => {
@@ -71,10 +92,10 @@ test('cron skips overlapping passes and pause waits until the active pass finish
       if (fs.existsSync('release')) clearInterval(interval);
     }, 10);
   `);
-  const first = runCron({ root, timeoutMs: 5_000 });
+  const first = runCron({ root, timeoutMs: fixtureRunTimeoutMs });
   const pending = [first];
   try {
-    await waitFor(join(root, 'started'));
+    await waitFor(join(root, 'started'), { running: first, logPath: join(root, 'logs/cron.log') });
     assert.deepEqual(await runCron({ root }), { code: 0, skipped: 'already_running' });
     let paused = false;
     const pause = pauseCron({ root }).then(() => { paused = true; });
@@ -102,20 +123,26 @@ test('terminating the cron runner stops its child and releases its lease', async
   `);
   const moduleUrl = new URL('../src/jobs/cron.js', import.meta.url).href;
   const source = `import { runCron } from ${JSON.stringify(moduleUrl)};
-    process.exitCode = (await runCron({ root: ${JSON.stringify(root)}, timeoutMs: 5_000 })).code;`;
+    process.exitCode = (await runCron({ root: ${JSON.stringify(root)}, timeoutMs: ${fixtureRunTimeoutMs} })).code;`;
   const running = execute(process.execPath, ['--input-type=module', '-e', source], {
-    env: { PATH: '/usr/bin:/bin' }, timeout: 10_000,
+    env: { PATH: '/usr/bin:/bin' }, timeout: 60_000,
   });
-  // Attach rejection handling before sending a signal.
-  const failed = assert.rejects(running, error => error.code === 1);
+  // Observe failures immediately, without an assertion in background cleanup
+  // replacing a useful startup error or becoming an unhandled rejection.
+  const completed = running.then(result => ({ result }), error => ({ error }));
   try {
-    await waitFor(join(root, 'started'));
+    await waitFor(join(root, 'started'), { running, logPath: join(root, 'logs/cron.log') });
     running.child.kill('SIGTERM');
-    await failed;
+    const { error } = await completed;
+    assert.equal(error?.code, 1);
+    assert.equal(error.signal, null);
     assert.match(await readFile(join(root, 'logs/cron.log'), 'utf8'), /"signal":"SIGTERM"/);
     await writeFile(join(root, 'src/jobs/retry.js'), '');
     assert.equal((await runCron({ root })).code, 0);
-  } finally { await failed; }
+  } finally {
+    if (running.child.exitCode === null && running.child.signalCode === null) running.child.kill('SIGTERM');
+    await completed;
+  }
 });
 
 test('cron preserves job failures and releases the lock after killing a hung job', async t => {
