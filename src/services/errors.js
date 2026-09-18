@@ -1,4 +1,5 @@
-const NETWORK_CODES = new Set(['ECONNRESET', 'ECONNREFUSED', 'ENOTFOUND', 'ETIMEDOUT', 'EAI_AGAIN', 'ENOENT', 'EACCES']);
+const NETWORK_CODES = new Set(['ECONNRESET', 'ECONNREFUSED', 'ENOTFOUND', 'ETIMEDOUT', 'EAI_AGAIN', 'EPIPE',
+  'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_BODY_TIMEOUT', 'UND_ERR_SOCKET', 'ENOENT', 'EACCES']);
 
 export class ServiceError extends Error {
   constructor(service, code, status) {
@@ -15,7 +16,10 @@ export function safeServiceError(service, error) {
   if (error instanceof ServiceError) return error;
   const candidate = Number(error?.status ?? error?.response?.status ?? error?.code);
   const status = Number.isInteger(candidate) && candidate >= 100 && candidate <= 599 ? candidate : undefined;
-  const code = status ? `HTTP_${status}` : NETWORK_CODES.has(error?.code) ? error.code
+  // Node fetch puts connection errors in cause. Copy only a recognised code;
+  // the cause's message, URL and other fields can contain credentials.
+  const networkCode = [error?.code, error?.cause?.code].find(code => NETWORK_CODES.has(code));
+  const code = status ? `HTTP_${status}` : networkCode ? networkCode
     : error?.name === 'AbortError' || error?.name === 'TimeoutError' ? 'REQUEST_ABORTED' : 'REQUEST_FAILED';
   return new ServiceError(service, code, status);
 }

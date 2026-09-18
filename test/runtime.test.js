@@ -7,6 +7,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { createRequire } from 'node:module';
+import { withLock } from '../src/util/lock.js';
 
 const execute = promisify(execFile);
 const root = fileURLToPath(new URL('../', import.meta.url));
@@ -15,12 +16,13 @@ test('PM2 wrapper launches the configured entrypoint', async t => {
   const cwd = await mkdtemp(join(tmpdir(), 'health-diary-pm2-'));
   t.after(() => rm(cwd, { recursive: true, force: true }));
   const wrapper = join(cwd, 'ProcessContainerFork.cjs');
-  // PM2 imports its configured script without changing process.argv[1].
-  await writeFile(wrapper, "import(require('node:url').pathToFileURL(process.env.pm_exec_path));\n");
+  // PM2 imports its configured script without changing process.argv[1]. Its
+  // monitoring handles can keep a bot process alive after startup has failed.
+  await writeFile(wrapper, "if (process.env.pm_exec_path.endsWith('/bot.js')) setInterval(() => {}, 1000);\nimport(require('node:url').pathToFileURL(process.env.pm_exec_path));\n");
   const launch = script => execute(process.execPath, [wrapper], {
     cwd,
     env: { PATH: process.env.PATH, DATA_DIR: join(cwd, 'data'), pm_exec_path: join(root, script) },
-    timeout: 15_000,
+    timeout: 30_000, killSignal: 'SIGKILL',
   });
   // No credentials: reaching configuration validation proves main() ran,
   // without contacting Telegram, Google or OpenAI.
@@ -29,6 +31,51 @@ test('PM2 wrapper launches the configured entrypoint', async t => {
     return error.code === 1;
   });
   assert.match((await launch('src/jobs/status.js')).stdout, /# Health Diary Status/);
+});
+
+test('supervised bot exits on a busy poller lock and recovers on restart with clean shutdown', async t => {
+  const cwd = await mkdtemp(join(tmpdir(), 'health-diary-pm2-lock-'));
+  t.after(() => rm(cwd, { recursive: true, force: true }));
+  const dataDir = join(cwd, 'data');
+  const wrapper = join(cwd, 'ProcessContainerFork.cjs');
+  await writeFile(wrapper, `
+    setInterval(() => {}, 1000);
+    globalThis.fetch = async (url, options) => {
+      if (!url.endsWith('/getUpdates')) throw new Error('Unexpected provider call');
+      return new Promise((resolve, reject) => {
+        options.signal.addEventListener('abort', () => reject(options.signal.reason), { once: true });
+        process.kill(process.pid, 'SIGTERM');
+      });
+    };
+    import(require('node:url').pathToFileURL(process.env.pm_exec_path));
+  `);
+  // Synthetic credentials only instantiate clients. Fetch is mocked above;
+  // no provider is contacted and no real installation files are read.
+  await writeFile(join(cwd, 'client.json'), JSON.stringify({ installed: { client_id: 'fixture', client_secret: 'fixture' } }));
+  await writeFile(join(cwd, 'token.json'), JSON.stringify({ refresh_token: 'fixture' }));
+  const launch = () => execute(process.execPath, [wrapper], {
+    cwd, timeout: 30_000, killSignal: 'SIGKILL',
+    env: {
+      PATH: process.env.PATH, DATA_DIR: dataDir, pm_exec_path: join(root, 'src/bot/bot.js'),
+      TELEGRAM_DIARY_USER_ID: '101', TELEGRAM_ADMIN_USER_ID: '202', TELEGRAM_BOT_TOKEN: 'fixture',
+      OPENAI_API_KEY: 'fixture', GOOGLE_DRIVE_ROOT_FOLDER_ID: 'fixture', GOOGLE_SHEET_ID: 'fixture',
+      GOOGLE_CREDENTIALS_FILE: join(cwd, 'client.json'), GOOGLE_TOKEN_FILE: join(cwd, 'token.json'),
+    },
+  });
+  await withLock(dataDir, async () => {
+    await assert.rejects(launch(), error => {
+      assert.match(error.stdout, /"event":"bot_failed","code":"ELOCKED"/);
+      assert.doesNotMatch(error.stdout, /bot_started/);
+      assert.equal(error.signal, null, 'failed startup must exit itself, without timeout or supervisor intervention');
+      return error.code === 1;
+    });
+  }, { name: 'poller', timeoutMs: 0 });
+  const result = await launch();
+  assert.match(result.stdout, /bot_started/);
+  assert.match(result.stdout, /bot_stopped/);
+  assert.doesNotMatch(result.stdout, /bot_failed/);
+  // SIGTERM must release the lease before the process exits.
+  await withLock(dataDir, async () => {}, { name: 'poller', timeoutMs: 0 });
 });
 
 test('importing bot and job modules does not start them', async t => {

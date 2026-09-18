@@ -85,6 +85,7 @@ Telegram retains queued updates for no more than 24 hours, and its standard bot 
 | Problem | Action |
 | --- | --- |
 | Startup reports missing configuration | Fill the named setting in `.env`; restart the bot. |
+| PM2 says `online`, but the bot is silent | Check the latest bot logs. If they end with `bot_failed` and no later `bot_started`, run `pm2 restart health-diary-bot`, then test `/help`. PM2's process status alone does not confirm that Telegram polling is running. |
 | Google authentication fails | Check consent, token expiry and archive permissions. Renew OAuth using the [setup guide](setup.md), then replace the server token while writers are stopped. |
 | OpenAI requests fail | Check API billing, key permissions and configured model access. |
 | Telegram polling conflicts | Stop other bot instances. If reusing a bot from another application, see [below](#reusing-an-existing-telegram-bot). |

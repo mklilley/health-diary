@@ -122,4 +122,12 @@ export async function main() {
   }
 }
 
-if (isMain(import.meta.url)) await main();
+if (isMain(import.meta.url)) {
+  await main();
+  // main() has finished and released its leases. PM2's monitoring handles can
+  // keep Node alive after this point, even with exitCode set after a failure.
+  // Flush the final logs, then exit so the supervisor can detect the outcome.
+  await Promise.all([process.stdout, process.stderr]
+    .map(stream => new Promise(resolve => stream.write('', resolve))));
+  process.exit(process.exitCode ?? 0);
+}

@@ -9,6 +9,7 @@ import { createOpenAIService } from '../src/services/openai.js';
 import { createDriveService, FOLDER_MIME } from '../src/services/google-drive.js';
 import { createSheetsService, ENTRY_HEADERS, DAY_HEADERS } from '../src/services/google-sheets.js';
 import { safeServiceError } from '../src/services/errors.js';
+import { safeError } from '../src/util/logging.js';
 import { loadGoogleAuth, makeGoogleAuth } from '../src/services/google-auth.js';
 import { validOAuthState, provisionGoogleArchive } from '../src/jobs/google-auth.js';
 import { prompt as entryPrompt, version as entryVersion } from '../src/prompts/entry-summary-v1.js';
@@ -77,6 +78,24 @@ test('Telegram API errors retain status without secrets or raw provider descript
     return true;
   });
   assert.equal(calls, 1, 'no hidden API retries');
+});
+
+test('Telegram fetch failures retain safe connection codes without exposing their nested causes', async () => {
+  for (const code of ['ECONNRESET', 'ENOTFOUND', 'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_BODY_TIMEOUT', 'UND_ERR_SOCKET', 'EPIPE', 'synthetic-private-code']) {
+    const telegram = createTelegramService(config, { fetchImpl: async () => {
+      const cause = Object.assign(new Error('synthetic-private-provider-detail'), { code, url: 'synthetic-private-url' });
+      throw new TypeError('synthetic-private-fetch-detail', { cause });
+    } });
+    await assert.rejects(telegram.getUpdates(), error => {
+      const known = code !== 'synthetic-private-code';
+      assert.equal(error.code, known ? code : 'REQUEST_FAILED');
+      assert.equal(safeError(error).code, error.code);
+      assert.equal(safeError(error).type, known ? 'network' : 'operation');
+      assert.equal(error.cause, undefined);
+      assert.doesNotMatch(`${error.stack} ${JSON.stringify(error)} ${JSON.stringify(safeError(error))}`, /synthetic-private/);
+      return true;
+    });
+  }
 });
 
 test('OpenAI uploads OGG unchanged and uses configured versions and full ordered transcripts', async (t) => {
