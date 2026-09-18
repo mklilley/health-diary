@@ -5,6 +5,7 @@ export const ADMIN_HELP = [
   'Health Diary admin commands:',
   '/status — current operational status',
   '/retry — retry outstanding operations now',
+  '/export — generate combined diary files in Drive',
   '/day YYYY-MM-DD — view a day',
   '/today — view today',
   '/yesterday — view yesterday',
@@ -36,6 +37,28 @@ export async function commandReply(text, { role, app, now = () => new Date() }) 
       return ADMIN_HELP;
     case 'status':
       return app.status();
+    case 'export': {
+      if (command.argument) return 'Use /export without arguments to export all saved diary text.';
+      const result = await app.exportAggregates();
+      if (!result.rebuilt) return 'Export could not be generated because some source files need attention. Existing exports were preserved. Use /status for details.';
+      const { snapshot, uploads } = result;
+      const lines = [result.uploaded ? 'Export ready.' : 'Export prepared; some uploads are still pending.', '',
+        `Generated: ${snapshot.generated_at} (Europe/London)`,
+        `Diary entries recorded: ${snapshot.entry_count}`,
+        `Transcripts included: ${snapshot.transcript_count}/${snapshot.entry_count}`,
+        `Entry summaries included: ${snapshot.entry_summary_count}/${snapshot.entry_count}`,
+        `Daily summaries included: ${snapshot.daily_summary_count}`,
+        `Entries still processing: ${snapshot.entries_pending}`,
+        `Due daily summaries missing: ${snapshot.due_daily_summaries_missing}`, '',
+        'This is a snapshot of saved text. Use /export again to include later changes.',
+      ];
+      for (const file of uploads) {
+        if (file.url) lines.push('', file.name, file.url);
+        else lines.push('', `${file.name}: upload pending`);
+      }
+      if (!result.uploaded) lines.push('', 'Scheduled retries will retry this snapshot. Use /status for progress and links, or /retry to retry now.');
+      return lines.join('\n');
+    }
     case 'retry': {
       const result = await app.retry({ force: true });
       return [

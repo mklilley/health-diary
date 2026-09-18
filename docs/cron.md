@@ -26,6 +26,8 @@ The generated line uses absolute paths to this checkout and your current Node ex
 - Check the no-entry reminder from 22:00 until midnight, London time.
 - Finalise the previous day from 02:00, London time.
 
+Cron also retries failed uploads from an administrator-requested `/export`. It never generates new combined files; those remain snapshots until the next `/export`.
+
 These date checks happen inside the application. The schedule works through GMT/BST changes even when the server uses UTC; no cron timezone setting is required. Pending work is checked on the next pass after downtime. Work may be delayed by ongoing processing or unavailable providers; previous-day reminders are never sent late.
 
 Use cron **or** the systemd timers. If the Health Diary timers are already enabled, have an administrator stop and disable them and stop any active Health Diary job services before enabling cron. The cron pause command does not control systemd timers.

@@ -66,9 +66,12 @@ With scheduled jobs installed, the bot checks for a no-entry reminder from **22:
 | --- | --- |
 | `/status` | Check processing and failures. |
 | `/retry` | Retry outstanding work now. |
+| `/export` | Generate combined diary files in Drive and return their links. |
 | `/today`, `/yesterday`, `/day YYYY-MM-DD` | View a day. |
 | `/last` | View the latest completed daily summary. |
 | `/help` | Show commands. |
+
+Use `/export` when you need all transcripts, entry summaries or daily summaries together for analysis. It combines saved text without calling AI, and reports the snapshot time, counts and unfinished processing. These files stay unchanged until the next export; individual records and daily summaries continue to be saved automatically.
 
 ## Privacy and storage
 

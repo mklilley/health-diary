@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, utimes } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { createDiary } from '../src/diary/index.js';
@@ -322,6 +322,177 @@ test('a durable voice receipt suppresses the reminder even before audio download
   assert.equal(f.sent.length, 0);
 });
 
+test('exports are explicit snapshots; new entries, daily jobs and retries never rebuild them', async t => {
+  const f = await fixture(t);
+  const first = await handleUpdate({ message: f.voice() }, f);
+  await f.app.retry();
+  await f.app.daily();
+  const directory = join(f.config.dataDir, 'aggregates');
+  assert.deepEqual(await readdir(directory), []);
+  const exportCalls = () => f.calls.filter(call => call.operation === 'putFile' && call.args.name.startsWith('all-'));
+  assert.equal(exportCalls().length, 0);
+  const result = await f.app.exportAggregates();
+  assert.equal(result.uploaded, true);
+  assert.equal(result.snapshot.entry_count, 1);
+  assert.equal(result.snapshot.transcript_count, 1);
+  assert.equal(result.snapshot.entry_summary_count, 1);
+  assert.equal(result.snapshot.entries_pending, 0);
+  assert.equal(result.uploads.length, 3);
+  assert.ok(result.uploads.every(file => file.url.startsWith('https://drive.google.com/file/d/')));
+  assert.equal(exportCalls().length, 3);
+  const originals = new Map();
+  for (const name of [...result.files, 'metadata.json']) {
+    originals.set(name, await readFile(join(directory, name), 'utf8'));
+    await utimes(join(directory, name), new Date(0), new Date(0));
+  }
+  f.setNow('2026-09-09T14:00:00Z');
+  const second = await handleUpdate({ message: f.voice(2) }, f);
+  f.setNow('2026-09-10T02:00:00Z');
+  await f.app.recordPoll();
+  await f.app.daily();
+  await f.app.retry();
+  assert.equal(f.count('summarizeDay'), 1);
+  for (const [name, content] of originals) {
+    assert.equal(await readFile(join(directory, name), 'utf8'), content);
+    assert.equal((await stat(join(directory, name))).mtimeMs, 0);
+  }
+  assert.equal(exportCalls().length, 3);
+  const fresh = await f.app.exportAggregates();
+  assert.equal(fresh.snapshot.entry_count, 2);
+  assert.equal(fresh.snapshot.daily_summary_count, 1);
+  assert.deepEqual(fresh.uploads.map(file => file.url), result.uploads.map(file => file.url));
+  const transcript = await readFile(join(directory, 'all-transcripts.md'), 'utf8');
+  assert.ok(transcript.includes(first.entry_id) && transcript.includes(second.entry_id));
+  assert.ok(transcript.includes(fresh.snapshot.generated_at));
+  assert.equal(f.count('transcribe'), 2);
+  assert.equal(f.count('summarizeEntry'), 2);
+  assert.equal(f.count('summarizeDay'), 1);
+});
+
+test('export reports missing text and due daily summaries without invoking AI or processing entries', async t => {
+  const f = await fixture(t);
+  await handleUpdate({ message: f.voice() }, f);
+  const pending = await f.app.receiveVoice(f.voice(2));
+  f.setNow('2026-09-10T02:15:00Z');
+  const aiCalls = [f.count('transcribe'), f.count('summarizeEntry'), f.count('summarizeDay')];
+  const result = await f.app.exportAggregates();
+  assert.equal(result.uploaded, true);
+  assert.deepEqual(result.snapshot, {
+    generated_at: '2026-09-10T03:15:00+01:00', entry_count: 2,
+    transcript_count: 1, entry_summary_count: 1, daily_summary_count: 0,
+    entries_pending: 1, due_daily_summaries_missing: 1,
+  });
+  assert.deepEqual([f.count('transcribe'), f.count('summarizeEntry'), f.count('summarizeDay')], aiCalls);
+  const text = await readFile(join(f.config.dataDir, 'aggregates/all-transcripts.md'), 'utf8');
+  assert.match(text, /Transcripts included: 1\/2/);
+  assert.match(text, /Entries still processing: 1/);
+  assert.ok(!text.includes(pending.entry_id));
+  assert.equal((await f.entry(pending)).steps.transcription.status, 'pending');
+});
+
+test('failed export uploads resume the original snapshot after restart without adding newer entries', async t => {
+  const f = await fixture(t);
+  await handleUpdate({ message: f.voice() }, f);
+  f.fault('drive:all-entry-summaries.md');
+  const result = await f.app.exportAggregates();
+  assert.equal(result.uploaded, false);
+  assert.equal(result.uploads.filter(file => file.complete).length, 2);
+  assert.equal(result.uploads.find(file => file.name === 'all-entry-summaries.md').url, null);
+  const path = join(f.config.dataDir, 'aggregates/all-entry-summaries.md');
+  const original = await readFile(path, 'utf8');
+  f.setNow('2026-09-09T14:00:00Z');
+  const newer = await handleUpdate({ message: f.voice(2) }, f);
+  f.faults.clear();
+  const restarted = await createDiary(f.options);
+  await restarted.retry();
+  const metadata = JSON.parse(await readFile(join(f.config.dataDir, 'aggregates/metadata.json'), 'utf8'));
+  assert.deepEqual(metadata.snapshot, result.snapshot);
+  assert.ok(Object.values(metadata.steps).every(step => step.status === 'complete'));
+  assert.equal(await readFile(path, 'utf8'), original);
+  assert.equal(f.files.get(`${metadata.drive_folder_id}/all-entry-summaries.md`).content, original);
+  assert.ok(!original.includes(newer.entry_id));
+  const status = await restarted.status();
+  assert.match(status, /Export files uploaded: 3\/3/);
+  assert.match(status, /https:\/\/drive.google.com\/file\/d\//);
+  assert.match(status, /Entries recorded at export: 1/);
+});
+
+test('export retries reject changed or missing snapshot files and recover through a new export', async t => {
+  const f = await fixture(t);
+  await handleUpdate({ message: f.voice() }, f);
+  f.fault('drive:all-transcripts.md');
+  await f.app.exportAggregates();
+  f.faults.clear();
+  const path = join(f.config.dataDir, 'aggregates/all-transcripts.md');
+  await atomicWrite(path, 'Synthetic changed snapshot');
+  await f.app.retry();
+  assert.match(await f.app.status(), /EXPORT_SNAPSHOT_CHANGED/);
+  await rm(path);
+  await f.app.retry({ force: true });
+  assert.match(await f.app.status(), /ENOENT/);
+  assert.equal(await exists(path), false);
+  assert.equal((await f.app.exportAggregates()).uploaded, true);
+  assert.doesNotMatch(await f.app.status(), /EXPORT_SNAPSHOT_CHANGED|all-transcripts.md: attention/);
+});
+
+test('interrupted export preparation cannot upload a mixture of old and new files after restart', async t => {
+  const f = await fixture(t);
+  await handleUpdate({ message: f.voice() }, f);
+  f.fault('drive:all-transcripts.md');
+  await f.app.exportAggregates();
+  f.faults.clear();
+  f.setNow('2026-09-09T14:00:00Z');
+  const newer = await handleUpdate({ message: f.voice(2) }, f);
+  const directory = join(f.config.dataDir, 'aggregates');
+  const blocked = join(directory, 'all-entry-summaries.md');
+  await rm(blocked);
+  await mkdir(blocked);
+  const uploads = () => f.calls.filter(call => call.operation === 'putFile' && call.args.name.startsWith('all-')).length;
+  const before = uploads();
+  await assert.rejects(f.app.exportAggregates(), error => ['EISDIR', 'EPERM', 'EACCES'].includes(error.code));
+  assert.ok((await readFile(join(directory, 'all-transcripts.md'), 'utf8')).includes(newer.entry_id));
+  const restarted = await createDiary(f.options);
+  await restarted.retry();
+  assert.equal(uploads(), before);
+  assert.equal(JSON.parse(await readFile(join(directory, 'metadata.json'), 'utf8')).upload_requested, false);
+  await rm(blocked, { recursive: true });
+  const recovered = await restarted.exportAggregates();
+  assert.equal(recovered.uploaded, true);
+  assert.equal(recovered.snapshot.entry_count, 2);
+});
+
+test('legacy aggregates and offline rebuilds stay untouched by automatic uploads', async t => {
+  const f = await fixture(t);
+  await handleUpdate({ message: f.voice() }, f);
+  const initial = await f.app.exportAggregates();
+  const path = join(f.config.dataDir, 'aggregates/metadata.json');
+  const legacy = JSON.parse(await readFile(path, 'utf8'));
+  delete legacy.upload_requested;
+  delete legacy.snapshot;
+  for (const step of Object.values(legacy.steps)) step.status = 'pending';
+  await atomicWriteJson(path, legacy);
+  const uploads = () => f.calls.filter(call => call.operation === 'putFile' && call.args.name.startsWith('all-')).length;
+  await f.app.retry();
+  assert.equal(uploads(), 3);
+  assert.doesNotMatch(await f.app.status(), /all-transcripts.md: pending/);
+  await f.app.rebuildAggregates();
+  await f.app.retry();
+  assert.equal(uploads(), 3);
+  assert.match(await f.app.status(), /Outstanding problems: none/);
+  const next = await f.app.exportAggregates();
+  assert.deepEqual(next.uploads.map(file => file.url), initial.uploads.map(file => file.url));
+});
+
+test('an empty diary can be exported without generating transcripts or summaries', async t => {
+  const f = await fixture(t);
+  const result = await f.app.exportAggregates();
+  assert.equal(result.uploaded, true);
+  assert.equal(result.snapshot.entry_count, 0);
+  assert.equal(result.snapshot.entries_pending, 0);
+  assert.equal(f.count('transcribe') + f.count('summarizeEntry') + f.count('summarizeDay'), 0);
+  assert.match(await readFile(join(f.config.dataDir, 'aggregates/all-transcripts.md'), 'utf8'), /Transcripts included: 0\/0/);
+});
+
 test('status and aggregate files can be deleted and rebuilt from authoritative individual records', async (t) => {
   const f = await fixture(t);
   const receipt = await handleUpdate({ message: f.voice() }, f);
@@ -433,10 +604,11 @@ test('audio cleanup is permitted only after transcription and verified Drive arc
 test('a missing primary transcript is visible and cannot overwrite the last good aggregate', async t => {
   const f = await fixture(t);
   const receipt = await handleUpdate({ message: f.voice() }, f);
+  await f.app.exportAggregates();
   const aggregate = join(f.config.dataDir, 'aggregates', 'all-transcripts.md');
   const previous = await readFile(aggregate, 'utf8');
   await rm(join(f.entryDirectory(receipt), 'transcript.md'));
-  const result = await f.app.rebuildAggregates();
+  const result = await f.app.exportAggregates();
   assert.equal(result.rebuilt, false);
   assert.equal(await readFile(aggregate, 'utf8'), previous);
   assert.match(await f.app.status(), /missing_transcription_file/);

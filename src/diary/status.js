@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { atomicWrite, atomicWriteJson, readJson } from '../util/atomic-write.js';
 import { addDays, localDate, localTimestamp, validateDate, finalisationCutoff } from '../util/dates.js';
-import { validAggregateMetadata } from './aggregates.js';
+import { exportResult, validAggregateMetadata } from './aggregates.js';
 
 export async function statusIndex(ctx) {
   const { entries, days, issues } = await ctx.store.scan();
@@ -28,8 +28,11 @@ export async function statusIndex(ctx) {
     aggregates = await readJson(join(ctx.store.root, 'aggregates', 'metadata.json'), { schema_version: 1, steps: {} });
     if (!validAggregateMetadata(aggregates)) throw new Error('Invalid aggregate state');
   }
-  catch { aggregates = { steps: { metadata: { status: 'attention', attempts: 0, last_error: { message: 'Aggregate upload state is unreadable; rebuild required' } } } }; }
-  for (const [key, step] of Object.entries(aggregates.steps)) add('aggregates', key, step);
+  catch { aggregates = { upload_requested: true, steps: { metadata: { status: 'attention', attempts: 0, last_error: { message: 'Aggregate upload state is unreadable; use /export to create a fresh snapshot' } } } }; }
+  // Legacy automatic aggregates and local-only rebuilds are not queued exports.
+  if (aggregates.upload_requested === true) {
+    for (const [key, step] of Object.entries(aggregates.steps)) add('exports', key, step);
+  }
   const state = await ctx.store.readState();
   const knownDates = new Set([...days.map(day => day.date), ...issues.filter(issue => issue.operation === 'invalid_day_metadata').map(issue => issue.date)]);
   for (let date = state.start_date; date <= finalisationCutoff(ctx.now()); date = addDays(date, 1)) {
@@ -49,6 +52,7 @@ export async function statusIndex(ctx) {
     needs_attention: operations.filter(op => op.status === 'attention').length,
     last_completed_daily_summary: days.filter(day => day.steps.daily_summary.status === 'complete').at(-1)?.date || null,
     last_poll_drained_at: state.last_poll_drained_at,
+    last_export: aggregates.upload_requested === true && aggregates.snapshot ? exportResult(aggregates) : null,
     operations };
 }
 
@@ -59,7 +63,15 @@ export async function rebuildStatus(ctx) {
     `Outstanding retries: ${index.outstanding_retries}`, `Needs attention: ${index.needs_attention}`, '',
     `Last completed daily summary: ${index.last_completed_daily_summary || 'none'}`, '',
     `Last Telegram backlog drain: ${index.last_poll_drained_at || 'not yet recorded'}`, '',
-    `Outstanding problems: ${index.operations.length ? index.operations.length : 'none'}`];
+    `Last requested export: ${index.last_export?.snapshot.generated_at || 'none'}`];
+  if (index.last_export) {
+    const { snapshot, uploads } = index.last_export;
+    lines.push(`Entries recorded at export: ${snapshot.entry_count}`,
+      `Entries still processing at export: ${snapshot.entries_pending}`,
+      `Export files uploaded: ${uploads.filter(file => file.complete).length}/${uploads.length}`);
+    for (const file of uploads) if (file.url) lines.push(`${file.name}: ${file.url}`);
+  }
+  lines.push('', `Outstanding problems: ${index.operations.length ? index.operations.length : 'none'}`);
   for (const operation of index.operations) {
     lines.push('', `- ${operation.id} / ${operation.operation}: ${operation.status}; attempts ${operation.attempts}`);
     if (operation.last_error) lines.push(`  ${operation.last_error.code || ''}: ${operation.last_error.message}`);

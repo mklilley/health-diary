@@ -6,7 +6,7 @@ export function isTransient(error) {
   const e = safeError(error);
   if (['DUPLICATE_REMOTE_OBJECT', 'REMOTE_OBJECT_CONFLICT', 'IMMUTABLE_CONTENT_CONFLICT', 'HEADER_MISMATCH',
     'DUPLICATE_REMOTE_KEY', 'MODEL_REFUSAL', 'CONFIGURATION_ERROR', 'FILE_TOO_LARGE', 'AUDIO_TOO_LARGE', 'INVALID_FILE_PATH',
-    'INVALID_AUDIO', 'ENOENT', 'EACCES', 'ENOSPC', 'EIO'].includes(e.code)) return false;
+    'INVALID_AUDIO', 'EXPORT_SNAPSHOT_CHANGED', 'ENOENT', 'EACCES', 'ENOSPC', 'EIO'].includes(e.code)) return false;
   return !e.status || e.status === 408 || e.status === 409 || e.status === 429 || e.status >= 500;
 }
 

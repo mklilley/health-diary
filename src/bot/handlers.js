@@ -1,4 +1,5 @@
-import { commandReply } from './commands.js';
+import { commandReply, parseCommand } from './commands.js';
+import { reportFailure } from '../runtime.js';
 
 export function messageRole(message, config) {
   if (!message || message.chat?.type !== 'private' || message.from?.is_bot) return null;
@@ -30,7 +31,16 @@ export async function handleUpdate(update, { app, services, config, process = tr
     return entry;
   }
 
-  const reply = await commandReply(message.text, { role, app, now });
+  const command = parseCommand(message.text);
+  const exporting = role === 'admin' && command?.name === 'export' && !command.argument;
+  if (exporting) await services.telegram.sendMessage(message.chat.id, 'Preparing the diary export. I will send Drive links when it is ready.');
+  let reply;
+  try { reply = await commandReply(message.text, { role, app, now }); }
+  catch (error) {
+    if (!exporting) throw error;
+    reportFailure('export_failed', error);
+    reply = 'The export could not be completed. Use /status for details and check the bot logs. Send /export again after resolving the problem.';
+  }
   if (reply) await services.telegram.sendMessage(message.chat.id, reply);
   return null;
 }

@@ -19,6 +19,8 @@ pm2 restart health-diary-bot
 
 The status, day and rebuild commands work without cloud credentials. `npm run retry` respects saved retry times; Telegram's `/retry` forces an immediate pass.
 
+`npm run rebuild-aggregates` rebuilds local combined files only and cancels any pending export uploads. Use the administrator's Telegram `/export` command to generate and upload a fresh snapshot to Drive.
+
 For [cron installations](cron.md), inspect `logs/cron.log`. Use `npm run cron:pause` before maintenance and `npm run cron:resume` afterwards. The pause command waits for any active scheduled pass to finish.
 
 For systemd installations, inspect scheduled jobs from an administrator shell:
@@ -36,17 +38,25 @@ sudo journalctl -u health-diary-daily.service -n 50 --no-pager
 | --- | --- |
 | `data/entries/YYYY-MM-DD/ENTRY_ID/` | `audio.ogg`, `transcript.md`, `summary.md`, `metadata.json` |
 | `data/days/YYYY-MM-DD/` | Daily `summary.md` and `metadata.json` |
-| `data/aggregates/` | Combined transcripts, entry summaries and daily summaries; upload state |
+| `data/aggregates/` | Most recently generated combined files, snapshot details and upload state |
 | `data/status/STATUS.md` | Human-readable processing status |
 | `data/status/index.json` | Rebuildable status cache |
 | `data/state.json` | Start date, polling state and shared alert reservations |
 | `data/telegram.json` | Durable Telegram update offset |
 
-Drive mirrors the entry, day and aggregate folders. The Sheet has an `Entries` tab with entry ID, received time, the exact stored short summary, audio link and transcript link. Its `Days` tab has date, daily summary and entry count.
+Drive automatically archives individual entry and day folders. Its `aggregates` folder is updated when an administrator requests an export. The Sheet has an `Entries` tab with entry ID, received time, the exact stored short summary, audio link and transcript link. Its `Days` tab has date, daily summary and entry count.
 
 Audio and raw transcripts are primary records. Per-entry and per-day metadata control processing. Summaries are derived; status, Sheets and aggregates are views. Local audio stays by default. With `RETAIN_LOCAL_AUDIO=false`, it can be removed only after transcription and verified Drive archival.
 
 Deleting a status file or aggregate does not lose primary records: rebuild it. Missing or corrupt primary files require repair; the application will not silently replace a good aggregate with incomplete source material. Never delete metadata to force a retry.
+
+## Exporting combined diary files
+
+Send `/export` in the administrator's private chat. It combines saved text into `all-transcripts.md`, `all-entry-summaries.md` and `all-daily-summaries.md`, and replies with Drive links. Each request replaces the previous snapshot using the same Drive files and links. It makes no AI requests and does not alter individual records.
+
+The reply and files show when the snapshot was generated, how much text was included, entries still processing (including pending uploads or acknowledgements), and due daily summaries not yet saved. An export uses what is already saved; it does not wait for unfinished processing or generate missing summaries. Request another export after that work finishes if you need it included.
+
+New entries, daily jobs, restarts and cron passes do not rebuild these files. If an export upload fails, scheduled retries upload that same saved snapshot. Check `/status` for progress and links, or use `/retry` for an immediate attempt. Aggregate files from an older installation remain unchanged until you request an export.
 
 ## Processing and recovery
 
@@ -107,7 +117,7 @@ Preserve attempts and every source/AI step. Save valid JSON atomically, then res
 
 ## Restoring a lost data directory
 
-Stop all writers. Securely restore the archived `entries/` and `days/` trees from Drive into `data/`, preserving filenames. Restore credentials separately, then inspect metadata, Drive IDs, the diary start date and Telegram delivery state before reconnecting. Rebuild status and aggregates, then retry.
+Stop all writers. Securely restore the archived `entries/` and `days/` trees from Drive into `data/`, preserving filenames. Restore credentials separately, then inspect metadata, Drive IDs, the diary start date and Telegram delivery state before reconnecting. Rebuild status, then retry. Use `/export` when you next need combined files.
 
 Remote metadata is a snapshot and may lag local delivery reservations. Review uncertain sends before resuming. There is no automated disaster-restore command, and Drive cannot recover files that never uploaded.
 

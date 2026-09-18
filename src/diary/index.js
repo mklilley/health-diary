@@ -5,7 +5,7 @@ import { safeError } from '../util/logging.js';
 import { createStore, pendingStep } from './metadata.js';
 import { receiveVoice, processEntry } from './entries.js';
 import { finaliseDays, sendReminder } from './days.js';
-import { rebuildAggregates } from './aggregates.js';
+import { rebuildAggregates, retryAggregateUploads } from './aggregates.js';
 import { rebuildStatus, statusIndex, showDay, lastDay } from './status.js';
 
 // Public operations share one writer lock across PM2, timers and manual jobs.
@@ -21,9 +21,8 @@ export async function createDiary({ config, services = {}, now = () => new Date(
     state.steps ||= {};
     await ctx.runner.alerts(state, store.writeState);
   }
-  async function refresh({ upload = false, force = false } = {}) {
-    await rebuildAggregates(ctx, { upload, force });
-    if (upload) await flushAlerts();
+  async function refresh() {
+    await flushAlerts();
     await rebuildStatus(ctx);
   }
   return {
@@ -33,7 +32,7 @@ export async function createDiary({ config, services = {}, now = () => new Date(
       const entry = entries.find(entry => entry.entry_id === entryId);
       if (!entry) throw new Error('Entry not found or metadata needs attention');
       const result = await processEntry(ctx, entry);
-      await refresh({ upload: true });
+      await refresh();
       return result;
     }),
     retry: ({ force = false } = {}) => locked(async () => {
@@ -44,17 +43,23 @@ export async function createDiary({ config, services = {}, now = () => new Date(
       if (state.steps) await ctx.runner.alerts(state, store.writeState);
       await finaliseDays(ctx, { force });
       await sendReminder(ctx);
-      await refresh({ upload: true, force });
+      await retryAggregateUploads(ctx, { force });
+      await refresh();
       const after = await statusIndex(ctx);
       const key = operation => `${operation.id}/${operation.operation}`;
       const outstanding = new Set(after.operations.map(key));
       return { checked: before.operations.length, resolved: before.operations.filter(op => !outstanding.has(key(op))).length,
         retrying: after.outstanding_retries, attention: after.needs_attention };
     }),
-    daily: () => locked(async () => { const result = await finaliseDays(ctx); await refresh({ upload: true }); return result; }),
+    daily: () => locked(async () => { const result = await finaliseDays(ctx); await refresh(); return result; }),
     reminder: () => locked(async () => { const result = await sendReminder(ctx); await flushAlerts(); await rebuildStatus(ctx); return result; }),
     status: () => locked(() => rebuildStatus(ctx)),
     rebuildAggregates: () => locked(async () => { const result = await rebuildAggregates(ctx); await rebuildStatus(ctx); return result; }),
+    exportAggregates: () => locked(async () => {
+      const result = await rebuildAggregates(ctx, { upload: true, force: true });
+      await rebuildStatus(ctx);
+      return result;
+    }),
     showDay: date => locked(() => showDay(ctx, date)),
     lastDay: () => locked(() => lastDay(ctx)),
     recordPoll: (at = now()) => locked(async () => {

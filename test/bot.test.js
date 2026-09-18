@@ -24,6 +24,15 @@ function mocks() {
       processEntry: async (id) => calls.push(['process', id]),
       status: async () => { calls.push(['status']); return 'Operational status'; },
       retry: async (options) => { calls.push(['retry', options]); return { checked: 3, resolved: 2, retrying: 1, attention: 0 }; },
+      exportAggregates: async () => {
+        calls.push(['export']);
+        return { rebuilt: true, uploaded: true,
+          snapshot: { generated_at: '2026-06-02T00:30:00+01:00', entry_count: 2, transcript_count: 2,
+            entry_summary_count: 2, daily_summary_count: 1, entries_pending: 0, due_daily_summaries_missing: 0 },
+          uploads: ['all-transcripts.md', 'all-entry-summaries.md', 'all-daily-summaries.md']
+            .map((name, i) => ({ name, complete: true, url: `https://drive.google.com/file/d/export-${i}/view` })),
+        };
+      },
       showDay: async (date) => { calls.push(['day', date]); return `Stored day ${date}`; },
       lastDay: async () => { calls.push(['last']); return 'Most recent completed day'; },
     },
@@ -61,6 +70,8 @@ test('unknown users, groups, edited messages, channels and bot senders cannot ac
     { channel_post: message(202, { text: '/status' }) },
     { message: message(202, { text: '/status', from: { id: 202, is_bot: true } }) },
     { message: message(202, { text: '/status', chat: { id: 303, type: 'private' } }) },
+    { message: message(303, { text: '/export' }) },
+    { message: message(202, { text: '/export', chat: { id: -1, type: 'group' } }) },
   ];
   for (const update of updates) assert.equal(await handleUpdate(update, dependencies), null);
   assert.deepEqual(dependencies.calls, []);
@@ -68,13 +79,13 @@ test('unknown users, groups, edited messages, channels and bot senders cannot ac
 
 test('diary user cannot invoke any admin command, including bot-addressed commands', async () => {
   const dependencies = mocks();
-  for (const text of ['/status', '/retry', '/day 2026-06-01', '/today', '/yesterday', '/last', '/status@DiaryBot']) {
+  for (const text of ['/status', '/retry', '/export', '/export@DiaryBot', '/day 2026-06-01', '/today', '/yesterday', '/last', '/status@DiaryBot']) {
     await handleUpdate({ message: message(101, { text }) }, dependencies);
   }
   assert.ok(dependencies.calls.every(([operation, recipient, text]) => operation === 'send' && recipient === 101 && /voice notes/.test(text)));
   assert.equal(await commandReply('/help', { ...dependencies, role: 'diary_user' }), DIARY_USER_HELP);
   assert.equal(await commandReply('/start', { ...dependencies, role: 'diary_user' }), DIARY_USER_HELP);
-  assert.doesNotMatch(DIARY_USER_HELP, /\/retry|\/status|\/day/);
+  assert.doesNotMatch(DIARY_USER_HELP, /\/retry|\/status|\/day|\/export/);
 });
 
 test('admin commands use stored views, strict ISO dates and London calendar dates', async () => {
@@ -94,8 +105,47 @@ test('admin commands use stored views, strict ISO dates and London calendar date
   assert.deepEqual(dependencies.calls.find(([operation]) => operation === 'retry'), ['retry', { force: true }]);
   for (const text of ['/help', '/start']) {
     const help = await commandReply(text, context);
-    for (const command of ['/status', '/retry', '/day', '/today', '/yesterday', '/last', '/help']) assert.ok(help.includes(command));
+    for (const command of ['/status', '/retry', '/export', '/day', '/today', '/yesterday', '/last', '/help']) assert.ok(help.includes(command));
   }
+});
+
+test('admin export acknowledges the request and replies with dated counts and private Drive links', async () => {
+  const dependencies = mocks();
+  await handleUpdate({ message: message(202, { text: '/export@DiaryBot' }) }, dependencies);
+  const [ack, operation, reply] = dependencies.calls;
+  assert.deepEqual(ack.slice(0, 2), ['send', 202]);
+  assert.match(ack[2], /Preparing the diary export/);
+  assert.deepEqual(operation, ['export']);
+  assert.deepEqual(reply.slice(0, 2), ['send', 202]);
+  assert.match(reply[2], /Export ready/);
+  assert.match(reply[2], /Generated: 2026-06-02T00:30:00\+01:00/);
+  assert.match(reply[2], /Transcripts included: 2\/2/);
+  assert.match(reply[2], /Entries still processing: 0/);
+  assert.equal((reply[2].match(/https:\/\/drive.google.com\/file\/d\//g) || []).length, 3);
+  dependencies.calls.length = 0;
+  await handleUpdate({ message: message(202, { text: '/export extra' }) }, dependencies);
+  assert.equal(dependencies.calls.length, 1);
+  assert.match(dependencies.calls[0][2], /without arguments/);
+});
+
+test('export replies distinguish incomplete uploads, damaged sources and unexpected failures', async () => {
+  const dependencies = mocks();
+  const result = await dependencies.app.exportAggregates();
+  result.uploaded = false;
+  result.uploads[0] = { name: 'all-transcripts.md', complete: false, url: null };
+  dependencies.app.exportAggregates = async () => result;
+  const partial = await commandReply('/export', { ...dependencies, role: 'admin' });
+  assert.match(partial, /uploads are still pending/);
+  assert.match(partial, /all-transcripts.md: upload pending/);
+  assert.doesNotMatch(partial, /export-0\/view/);
+  assert.match(partial, /\/status/);
+  dependencies.app.exportAggregates = async () => ({ rebuilt: false });
+  assert.match(await commandReply('/export', { ...dependencies, role: 'admin' }), /Existing exports were preserved/);
+  dependencies.app.exportAggregates = async () => { throw new Error('Synthetic private provider detail'); };
+  dependencies.calls.length = 0;
+  await handleUpdate({ message: message(202, { text: '/export' }) }, dependencies);
+  assert.match(dependencies.calls.at(-1)[2], /could not be completed/);
+  assert.doesNotMatch(dependencies.calls.at(-1)[2], /private provider detail/);
 });
 
 test('today and yesterday stay correct over both London DST transitions', async () => {

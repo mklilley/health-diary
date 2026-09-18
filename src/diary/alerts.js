@@ -21,7 +21,7 @@ export async function updateAlerts(ctx, meta, save) {
   const { entries, days, issues } = await ctx.store.scan();
   let aggregates;
   try { aggregates = await readJson(join(ctx.store.root, 'aggregates', 'metadata.json'), null); } catch { /* Status reports corrupt derived state. */ }
-  const records = [...entries, ...days, state, ...(aggregates?.steps ? [aggregates] : [])];
+  const records = [...entries, ...days, state, ...(aggregates?.upload_requested === true && aggregates.steps ? [aggregates] : [])];
   const active = new Map();
   if (issues.length) active.set('Local files:LOCAL_SOURCE_INVALID', issues.map(issue => `${issue.id}: ${issue.operation}`));
   for (const day of days) {
