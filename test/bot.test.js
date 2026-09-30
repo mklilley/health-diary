@@ -34,7 +34,7 @@ function mocks() {
         };
       },
       showDay: async (date) => { calls.push(['day', date]); return `Stored day ${date}`; },
-      lastDay: async () => { calls.push(['last']); return 'Most recent completed day'; },
+      lastDay: async () => { calls.push(['last']); return 'Latest day with entries'; },
     },
   };
 }
@@ -96,7 +96,7 @@ test('admin commands use stored views, strict ISO dates and London calendar date
   assert.equal(await commandReply('/day 2026-02-28', context), 'Stored day 2026-02-28');
   assert.equal(await commandReply('/today', context), 'Stored day 2026-06-02');
   assert.equal(await commandReply('/yesterday', context), 'Stored day 2026-06-01');
-  assert.equal(await commandReply('/last', context), 'Most recent completed day');
+  assert.equal(await commandReply('/last', context), 'Latest day with entries');
   const reads = dependencies.calls.length;
   for (const text of ['/day', '/day 2026-02-30', '/day 2026-6-1', '/day ../../secret', '/day 2026-02-28 extra']) {
     assert.match(await commandReply(text, context), /valid calendar date/);

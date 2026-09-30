@@ -9,7 +9,7 @@ export const ADMIN_HELP = [
   '/day YYYY-MM-DD — view a day',
   '/today — view today',
   '/yesterday — view yesterday',
-  '/last — most recent completed daily summary',
+  '/last — latest day with entries (daily summary or entry summaries)',
   '/help — show this help',
   '',
   'Admin voice notes are not added to the diary.',

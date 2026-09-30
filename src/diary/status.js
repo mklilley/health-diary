@@ -101,7 +101,9 @@ export async function showDay(ctx, date) {
 }
 
 export async function lastDay(ctx) {
-  const { days } = await ctx.store.scan();
-  const day = days.filter(day => day.steps.daily_summary.status === 'complete').at(-1);
-  return day ? showDay(ctx, day.date) : 'No completed daily summary yet.';
+  const { entries } = await ctx.store.scan();
+  // Entries are ordered by received time; empty completed days must not hide
+  // the latest diary day, including one whose summary is still pending.
+  const latest = entries.at(-1);
+  return latest ? showDay(ctx, latest.date) : 'No diary entries recorded yet.';
 }

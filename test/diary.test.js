@@ -198,6 +198,7 @@ test('an hour-old transient failure becomes attention while remaining recoverabl
 
 test('zero-entry day completes without AI and is added to Days exactly once', async (t) => {
   const f = await fixture(t, '2026-09-10T02:00:00Z');
+  assert.equal(await f.app.lastDay(), 'No diary entries recorded yet.');
   await f.app.recordPoll();
   await f.app.daily();
   const day = await f.day('2026-09-09');
@@ -208,6 +209,46 @@ test('zero-entry day completes without AI and is added to Days exactly once', as
   await f.app.daily();
   assert.equal(f.days.size, 1);
   assert.equal(f.count('summarizeDay'), 0);
+  assert.equal(await f.app.lastDay(), 'No diary entries recorded yet.');
+});
+
+test('last day skips newer empty completed days and reuses the latest nonempty daily summary', async t => {
+  const f = await fixture(t);
+  await handleUpdate({ message: f.voice() }, f);
+  f.setNow('2026-09-11T02:00:00Z');
+  await f.app.recordPoll();
+  await f.app.daily();
+  assert.equal((await f.day('2026-09-10')).steps.daily_summary.status, 'complete');
+  assert.equal((await f.day('2026-09-10')).entry_count, 0);
+  const calls = f.calls.length;
+  assert.equal(await f.app.lastDay(), '2026-09-09\nNumber of entries: 1\n\nStored daily summary for 2026-09-09 with 1 sources.');
+  assert.equal(f.calls.length, calls, 'viewing the latest diary day makes no provider calls');
+});
+
+test('last day shows the newest entries while their daily summary or processing is pending', async t => {
+  const f = await fixture(t);
+  await handleUpdate({ message: f.voice() }, f);
+  f.setNow('2026-09-10T02:00:00Z');
+  await f.app.recordPoll();
+  await f.app.daily();
+  f.setNow('2026-09-10T12:00:00Z');
+  const latest = await handleUpdate({ message: f.voice(2) }, f);
+  const summary = await readFile(join(f.entryDirectory(latest), 'summary.md'), 'utf8');
+  f.setNow('2026-09-10T13:00:00Z');
+  await f.app.receiveVoice(f.voice(3));
+  const calls = f.calls.length;
+  const view = await f.app.lastDay();
+  assert.match(view, /^2026-09-10\nNumber of entries so far: 2/);
+  assert.ok(view.includes(summary));
+  assert.match(view, /Processing pending\./);
+  assert.doesNotMatch(view, /Stored daily summary for 2026-09-09/);
+  assert.equal(f.calls.length, calls);
+  // The same unfinished day remains the latest diary day after midnight.
+  f.setNow('2026-09-11T02:00:00Z');
+  await f.app.recordPoll();
+  await f.app.daily();
+  assert.equal((await f.day('2026-09-10')).steps.daily_summary.status, 'retry');
+  assert.equal(await f.app.lastDay(), view);
 });
 
 test('daily finalisation waits for the Telegram backlog and every transcript, then uses raw sources in order', async (t) => {
@@ -258,7 +299,7 @@ test('corrections append new entries and retrospective comments cannot regenerat
   assert.deepEqual(await readFile(join(f.config.dataDir, 'days', '2026-09-09', 'summary.md')), oldSummary);
   assert.equal(f.count('summarizeDay'), 1);
   assert.equal((await f.day('2026-09-09')).summary_entry_count, 2);
-  assert.match(await f.app.lastDay(), /2026-09-09/);
+  assert.match(await f.app.lastDay(), /^2026-09-10\n/);
 });
 
 test('today remains a list of existing entry summaries until finalisation; viewing it never calls AI', async (t) => {
