@@ -30,7 +30,7 @@ export async function commandReply(text, { role, app, now = () => new Date() }) 
   }
   if (role !== 'admin') return null;
   // Multi-user commands must never fall through to installation-wide jobs.
-  // The admin menu will provide an explicitly selected, scoped diary app.
+  // The admin menu provides an explicitly selected, scoped diary app.
   if (app.multiUser) return 'Choose a diary in /admin before using admin commands.';
   if (!command) return 'Type /help for the available admin commands.';
 

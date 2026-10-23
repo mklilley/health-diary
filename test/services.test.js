@@ -66,6 +66,42 @@ test('Telegram splits long output without splitting a surrogate pair', async () 
   assert.deepEqual(result.message_ids, [1, 2]);
 });
 
+test('Telegram repeats diary identification on every chunk and attaches buttons only to the last', async () => {
+  const bodies = [];
+  const telegram = createTelegramService(config, { fetchImpl: async (_, options) => {
+    bodies.push(JSON.parse(options.body));
+    return json({ message_id: bodies.length });
+  } });
+  const prefix = 'Diary: Alex <fixture> (101)\n\n';
+  const text = `${'x'.repeat(4095 - prefix.length)}😀${'y'.repeat(6000)}`;
+  const replyMarkup = { inline_keyboard: [[{ text: 'Today', callback_data: 'fixture' }]] };
+  const result = await telegram.sendMessage(202, text, { prefix, replyMarkup });
+  assert.equal(bodies.length, 3);
+  assert.ok(bodies.every(body => body.text.startsWith(prefix) && body.text.length <= 4096 && body.parse_mode === undefined));
+  assert.equal(bodies.map(body => body.text.slice(prefix.length)).join(''), text);
+  assert.ok(bodies.slice(0, -1).every(body => body.reply_markup === undefined));
+  assert.deepEqual(bodies.at(-1).reply_markup, replyMarkup);
+  assert.equal(result.message_id, 3);
+});
+
+test('Telegram requests callback updates and scopes the command menu to the admin private chat', async () => {
+  const calls = [];
+  const telegram = createTelegramService(config, { fetchImpl: async (url, options) => {
+    calls.push({ method: url.split('/').at(-1), body: JSON.parse(options.body) });
+    return json(url.endsWith('/getUpdates') ? [] : true);
+  } });
+  await telegram.getUpdates({ offset: 20, timeout: 0 });
+  await telegram.answerCallbackQuery('query-1');
+  await telegram.removeKeyboard(202, 7);
+  await telegram.setAdminCommands(202);
+  assert.deepEqual(calls[0].body, { offset: 20, timeout: 0, allowed_updates: ['message', 'callback_query'] });
+  assert.deepEqual(calls[1], { method: 'answerCallbackQuery', body: { callback_query_id: 'query-1', cache_time: 0 } });
+  assert.deepEqual(calls[2], { method: 'editMessageReplyMarkup', body: { chat_id: 202, message_id: 7, reply_markup: { inline_keyboard: [] } } });
+  assert.equal(calls[3].method, 'setMyCommands');
+  assert.deepEqual(calls[3].body.scope, { type: 'chat', chat_id: 202 });
+  assert.deepEqual(calls[3].body.commands.map(command => command.command), ['admin', 'help', 'cancel']);
+});
+
 test('Telegram API errors retain status without secrets or raw provider descriptions', async () => {
   let calls = 0;
   const telegram = createTelegramService(config, { fetchImpl: async () => {

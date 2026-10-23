@@ -4,7 +4,8 @@ import { atomicWriteJson, readJson } from '../util/atomic-write.js';
 import { withLock } from '../util/lock.js';
 import { log, safeError } from '../util/logging.js';
 import { createRuntime, isMain, reportFailure } from '../runtime.js';
-import { handleUpdate, isDiaryVoice, messageRole } from './handlers.js';
+import { handleUpdate, isDiaryVoice, isInteraction } from './handlers.js';
+import { acknowledgeCallback } from './admin-menu.js';
 
 async function pause(milliseconds, signal) {
   try { await delay(milliseconds, undefined, { signal }); }
@@ -35,6 +36,10 @@ export async function runBot({
     const entries = new Map();
     const interactions = [];
 
+    if (app.multiUser && services.telegram.setAdminCommands) {
+      try { await services.telegram.setAdminCommands(config.adminUserId); }
+      catch (error) { logger('telegram_admin_commands_failed', safeError(error)); }
+    }
     logger('bot_started');
     if (typeof process.send === 'function') process.send('ready');
 
@@ -57,7 +62,10 @@ export async function runBot({
               const entry = await handleUpdate(update, { app, services, config, process: false, now });
               const ownerId = update.message.from.id;
               entries.set(`${ownerId}:${entry.entry_id}`, { entryId: entry.entry_id, ownerId });
-            } else if (messageRole(update.message, config)) interaction = update;
+            } else if (isInteraction(update, config)) {
+              if (update.callback_query) await acknowledgeCallback(update.callback_query, { config, services });
+              interaction = update;
+            }
             const committedOffset = update.update_id + 1;
             await atomicWriteJson(cursorPath, { schema_version: 1, next_offset: committedOffset });
             nextOffset = committedOffset;
@@ -89,7 +97,7 @@ export async function runBot({
         }
         while (interactions.length && !signal?.aborted) {
           const update = interactions.shift();
-          try { await handleUpdate(update, { app, services, config, now }); }
+          try { await handleUpdate(update, { app, services, config, now, callbackAnswered: Boolean(update.callback_query) }); }
           catch (error) { logger('bot_interaction_failed', safeError(error)); }
         }
         cycle += 1;

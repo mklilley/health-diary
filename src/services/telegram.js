@@ -2,11 +2,11 @@ import { guarded, ServiceError } from './errors.js';
 
 export const TELEGRAM_DOWNLOAD_LIMIT = 20 * 1024 * 1024;
 
-function splitMessage(text) {
+function splitMessage(text, limit = 4096) {
   const chunks = [];
   let remaining = String(text);
-  while (remaining.length > 4096) {
-    let end = 4096;
+  while (remaining.length > limit) {
+    let end = limit;
     if (/[\uD800-\uDBFF]/.test(remaining[end - 1])) end--;
     chunks.push(remaining.slice(0, end));
     remaining = remaining.slice(end);
@@ -42,16 +42,27 @@ export function createTelegramService(config, { fetchImpl = globalThis.fetch } =
   return {
     getMe: () => api('getMe'),
     getUpdates: ({ offset = 0, timeout = 30, signal } = {}) => api('getUpdates', {
-      offset, timeout, allowed_updates: ['message'],
+      offset, timeout, allowed_updates: ['message', 'callback_query'],
     }, signal, Math.max(config.httpTimeoutMs, (timeout + 10) * 1000)),
-    async sendMessage(chatId, text) {
-      const chunks = splitMessage(text);
+    answerCallbackQuery: (id, text) => api('answerCallbackQuery', { callback_query_id: id, ...(text ? { text } : {}), cache_time: 0 }, undefined, Math.min(config.httpTimeoutMs, 10000)),
+    removeKeyboard: (chatId, messageId) => api('editMessageReplyMarkup', {
+      chat_id: chatId, message_id: messageId, reply_markup: { inline_keyboard: [] },
+    }, undefined, Math.min(config.httpTimeoutMs, 10000)),
+    setAdminCommands: chatId => api('setMyCommands', {
+      scope: { type: 'chat', chat_id: chatId },
+      commands: [{ command: 'admin', description: 'Choose a diary and open admin controls' },
+        { command: 'help', description: 'Help and diary controls' }, { command: 'cancel', description: 'Close admin controls and clear selection' }],
+    }, undefined, Math.min(config.httpTimeoutMs, 10000)),
+    async sendMessage(chatId, text, { replyMarkup, prefix = '' } = {}) {
+      if (typeof prefix !== 'string' || prefix.length > 500) throw new ServiceError('telegram', 'INVALID_MESSAGE_PREFIX');
+      const chunks = splitMessage(text, 4096 - prefix.length);
       if (!chunks.length) throw new ServiceError('telegram', 'EMPTY_MESSAGE');
       const ids = [];
-      for (const chunk of chunks) {
+      for (const [index, chunk] of chunks.entries()) {
         try {
           const message = await api('sendMessage', {
-            chat_id: chatId, text: chunk, link_preview_options: { is_disabled: true },
+            chat_id: chatId, text: `${prefix}${chunk}`, link_preview_options: { is_disabled: true },
+            ...(replyMarkup && index === chunks.length - 1 ? { reply_markup: replyMarkup } : {}),
           });
           if (!Number.isSafeInteger(message?.message_id)) throw new ServiceError('telegram', 'INVALID_RESPONSE');
           ids.push(message.message_id);

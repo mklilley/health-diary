@@ -1,38 +1,57 @@
 import { commandReply, parseCommand } from './commands.js';
 import { reportFailure } from '../runtime.js';
+import { isDiaryUser, messageRole, privateSender } from './access.js';
+import { createAdminMenu, acknowledgeCallback } from './admin-menu.js';
 
-export function messageRole(message, config) {
-  if (!message || message.chat?.type !== 'private' || message.from?.is_bot) return null;
-  if (!Number.isSafeInteger(message.from?.id) || !Number.isSafeInteger(message.chat?.id)) return null;
-  // All replies containing diary material go to the authenticated private user.
-  if (message.chat.id !== message.from.id) return null;
-  if (message.from.id === config.adminUserId) return 'admin';
-  if (isDiaryUser(message.from.id, config)) return 'diary_user';
-  return null;
+export { messageRole } from './access.js';
+
+// Menu state is intentionally transient: restarting the app clears selections
+// and makes all buttons from that earlier process expire.
+const menus = new WeakMap();
+function adminMenu(context) {
+  if (!menus.has(context.app)) menus.set(context.app, createAdminMenu(context));
+  return menus.get(context.app);
 }
 
-function isDiaryUser(id, config) {
-  return config.diaryUsers ? config.diaryUsers.some(user => user.telegramUserId === id) : id === config.diaryUserId;
+export function isInteraction(update, config) {
+  return Boolean(update?.callback_query || messageRole(update?.message, config)
+    || (config.diaryUsers && privateSender(update?.message)));
 }
 
 export function isDiaryVoice(update, config) {
   return Boolean(messageRole(update?.message, config) && isDiaryUser(update.message.from.id, config) && update.message.voice);
 }
 
-/** Edited messages, channel posts, groups and unknown senders are ignored. */
-export async function handleUpdate(update, { app, services, config, process = true, now }) {
+/** Only authenticated private messages can record or access a diary. */
+export async function handleUpdate(update, { app, services, config, process = true, now, callbackAnswered = false }) {
+  const context = { app, services, config, now };
+  if (update?.callback_query) {
+    if (app.multiUser) await adminMenu(context).handleCallback(update.callback_query, { answered: callbackAnswered });
+    else if (!callbackAnswered) await acknowledgeCallback(update.callback_query, context);
+    return null;
+  }
   const message = update?.message;
   const role = messageRole(message, config);
-  if (!role) return null;
+  if (!role) {
+    if (config.diaryUsers && privateSender(message)) await services.telegram.sendMessage(message.chat.id, 'Sorry, this bot is only available to approved diary users.');
+    return null;
+  }
 
   if (message.voice) {
     if (!isDiaryUser(message.from.id, config)) {
-      await services.telegram.sendMessage(message.chat.id, 'Admin voice notes are not added to the diary. Type /help for admin commands.');
+      await services.telegram.sendMessage(message.chat.id, config.diaryUsers
+        ? 'Your account is not enabled for voice entries. Open /admin for diary controls.'
+        : 'Admin voice notes are not added to the diary. Type /help for admin commands.');
       return null;
     }
     const entry = await app.receiveVoice(message);
     if (process) await app.processEntry(entry.entry_id, message.from.id);
     return entry;
+  }
+
+  if (app.multiUser && role === 'admin') {
+    await adminMenu(context).handleMessage(message);
+    return null;
   }
 
   const command = parseCommand(message.text);

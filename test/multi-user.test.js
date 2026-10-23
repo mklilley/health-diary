@@ -34,8 +34,13 @@ async function fixture(t) {
   }
   const services = {
     telegram: {
+      removeKeyboard: async () => {},
+      answerCallbackQuery: async () => {},
       downloadVoice: async id => Buffer.from(`Synthetic source ${id}.`),
-      sendMessage: async (chatId, text) => { sent.push({ chatId, text }); return { message_id: sent.length }; },
+      sendMessage: async (chatId, text, options = {}) => {
+        sent.push({ chatId, text: `${options.prefix || ''}${text}`, options });
+        return { message_id: sent.length };
+      },
     },
     openai: {
       transcribe: async path => readFile(path, 'utf8'),
@@ -138,6 +143,39 @@ test('commands cannot use an implicit diary and voice membership is independent 
     { ...f.voice(202), from: { id: 202, is_bot: true } }]) assert.equal(await handleUpdate({ message }, f), null);
   assert.equal(f.objects.size, 0);
   assert.equal(await exists(f.userPath(303)), false);
+});
+
+test('visual admin selection reads and exports the chosen real diary while admin voice stays in their own', async t => {
+  const f = await fixture(t);
+  for (const id of [101, 202]) await handleUpdate({ message: f.voice(id) }, f);
+  const send = text => handleUpdate({ message: { ...f.voice(202), voice: undefined, text } }, f);
+  const tap = async text => {
+    const menu = f.sent.at(-1);
+    const button = menu.options.replyMarkup.inline_keyboard.flat().find(button => button.text === text);
+    assert.ok(button);
+    await handleUpdate({ callback_query: { id: `fixture-${f.sent.length}`, data: button.callback_data, from: { id: 202 },
+      message: { message_id: f.sent.length, date: 1_783_589_600, chat: { id: 202, type: 'private' } } } }, f);
+  };
+  await send('/admin');
+  await tap('Alex (101)');
+  await tap('Latest day');
+  assert.match(f.sent.at(-1).text, /^Diary: Alex \(101\)/);
+  assert.match(f.sent.at(-1).text, /voice-101-1/);
+  assert.doesNotMatch(f.sent.at(-1).text, /voice-202/);
+  await handleUpdate({ message: f.voice(202, 2) }, f);
+  await send('/today');
+  assert.match(f.sent.at(-1).text, /^Diary: Alex \(101\)/);
+  assert.match(f.sent.at(-1).text, /Number of entries so far: 1/);
+  await tap('Export');
+  assert.match(f.sent.at(-1).text, /Export ready/);
+  assert.match(await readFile(f.userPath(101, 'aggregates', 'all-transcripts.md'), 'utf8'), /voice-101-1/);
+  assert.equal(await exists(f.userPath(202, 'aggregates', 'all-transcripts.md')), false);
+  await tap('Switch person');
+  await tap('Sam (202)');
+  await tap('Latest day');
+  assert.match(f.sent.at(-1).text, /^Diary: Sam \(202\)/);
+  assert.match(f.sent.at(-1).text, /voice-202-2/);
+  assert.doesNotMatch(f.sent.at(-1).text, /voice-101/);
 });
 
 test('reminders and daily summaries use only their owners records; exports remain on demand', async t => {
