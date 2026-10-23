@@ -1,5 +1,6 @@
 import { loadEnvFile } from 'node:process';
 import { resolve } from 'node:path';
+import { readFileSync } from 'node:fs';
 
 export class ConfigurationError extends Error {
   constructor(message) {
@@ -7,6 +8,23 @@ export class ConfigurationError extends Error {
     this.name = 'ConfigurationError';
     this.code = 'CONFIGURATION_ERROR';
   }
+}
+
+export function validateDiaryUsers(value) {
+  if (!Array.isArray(value) || !value.length) throw new ConfigurationError('DIARY_USERS_FILE must contain a nonempty JSON array.');
+  const ids = new Set();
+  return Object.freeze(value.map(user => {
+    if (!user || typeof user !== 'object' || Array.isArray(user)
+      || Object.keys(user).some(key => !['telegramUserId', 'label'].includes(key))
+      || !Number.isSafeInteger(user.telegramUserId) || user.telegramUserId <= 0
+      || typeof user.label !== 'string' || !user.label.trim() || user.label.trim().length > 80
+      || /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/.test(user.label)) {
+      throw new ConfigurationError('Each diary user requires a positive numeric telegramUserId and a single-line label of 1–80 characters, with no other fields.');
+    }
+    if (ids.has(user.telegramUserId)) throw new ConfigurationError('DIARY_USERS_FILE contains duplicate Telegram user IDs.');
+    ids.add(user.telegramUserId);
+    return Object.freeze({ telegramUserId: user.telegramUserId, label: user.label.trim() });
+  }));
 }
 
 // Explicit env/cwd inputs keep configuration tests independent of local secrets.
@@ -42,7 +60,18 @@ export function loadConfig({ requireSecrets = true, env = process.env, cwd = pro
   };
   const timezone = value('TIMEZONE', 'Europe/London');
   if (timezone !== 'Europe/London') throw new ConfigurationError('TIMEZONE must be Europe/London for this diary.');
-  const diaryUserId = userId('TELEGRAM_DIARY_USER_ID');
+  const diaryUsersFile = value('DIARY_USERS_FILE') ? resolve(cwd, value('DIARY_USERS_FILE')) : null;
+  let diaryUsers;
+  if (diaryUsersFile) {
+    let contents;
+    try { contents = JSON.parse(readFileSync(diaryUsersFile, 'utf8')); }
+    catch { throw new ConfigurationError('Cannot read DIARY_USERS_FILE as JSON. Check its path, permissions and syntax.'); }
+    diaryUsers = validateDiaryUsers(contents);
+    if (['TELEGRAM_DIARY_USER_ID', 'GOOGLE_SHEET_ID', 'DIARY_START_DATE'].some(key => value(key))) {
+      throw new ConfigurationError('Complete the multi-user migration before removing the legacy diary, Sheet and start-date settings.');
+    }
+  }
+  const diaryUserId = diaryUsersFile ? null : userId('TELEGRAM_DIARY_USER_ID');
   const adminUserId = userId('TELEGRAM_ADMIN_USER_ID');
   if (diaryUserId !== null && diaryUserId === adminUserId) {
     throw new ConfigurationError('The diary user and admin must have distinct Telegram user IDs.');
@@ -61,13 +90,14 @@ export function loadConfig({ requireSecrets = true, env = process.env, cwd = pro
   return Object.freeze({
     dataDir: resolve(cwd, value('DATA_DIR', 'data')),
     timezone, diaryUserId, adminUserId,
+    diaryUsersFile, diaryUsers,
     telegramBotToken: required('TELEGRAM_BOT_TOKEN'),
     openaiApiKey: required('OPENAI_API_KEY'),
     transcriptionModel: value('TRANSCRIPTION_MODEL', 'gpt-4o-transcribe'),
     entrySummaryModel: value('ENTRY_SUMMARY_MODEL', 'gpt-4.1-mini'),
     dailySummaryModel: value('DAILY_SUMMARY_MODEL', 'gpt-4.1-mini'),
     googleDriveRootFolderId: required('GOOGLE_DRIVE_ROOT_FOLDER_ID'),
-    googleSheetId: required('GOOGLE_SHEET_ID'),
+    googleSheetId: diaryUsersFile ? null : required('GOOGLE_SHEET_ID'),
     googleCredentialsFile: resolve(cwd, value('GOOGLE_CREDENTIALS_FILE', 'credentials/google-oauth-client.json')),
     googleTokenFile: resolve(cwd, value('GOOGLE_TOKEN_FILE', 'tokens/google-token.json')),
     diaryStartDate,

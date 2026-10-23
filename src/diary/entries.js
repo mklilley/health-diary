@@ -45,7 +45,7 @@ export async function receiveVoice(ctx, message) {
 
 async function folder(ctx, entry) {
   if (entry.drive_folder_id) return entry.drive_folder_id;
-  const base = await ctx.services.drive.ensureFolder(ctx.config.googleDriveRootFolderId, 'entries');
+  const base = await ctx.services.drive.ensureFolder(await ctx.driveRoot(), 'entries');
   const date = await ctx.services.drive.ensureFolder(base.id, entry.date);
   const target = await ctx.services.drive.ensureFolder(date.id, entry.entry_id);
   entry.drive_folder_id = target.id;

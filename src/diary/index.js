@@ -1,4 +1,7 @@
 import { setTimeout } from 'node:timers/promises';
+import { join } from 'node:path';
+import { exists } from '../util/atomic-write.js';
+import { ConfigurationError } from '../config.js';
 import { withLock } from '../util/lock.js';
 import { createStepRunner, isTransient } from '../util/retry.js';
 import { safeError } from '../util/logging.js';
@@ -11,8 +14,12 @@ import { rebuildStatus, statusIndex, showDay, lastDay } from './status.js';
 // Public operations share one writer lock across PM2, timers and manual jobs.
 // Helpers called inside a public operation deliberately do not acquire it again.
 export async function createDiary({ config, services = {}, now = () => new Date(), sleep = setTimeout, random = Math.random }) {
+  if (await exists(join(config.dataDir, 'layout.json'))) {
+    throw new ConfigurationError('This data directory uses multi-user storage. Configure DIARY_USERS_FILE to open it.');
+  }
   const store = createStore(config, now);
   const ctx = { config, services, now, sleep, random, store };
+  ctx.driveRoot = () => services.archive ? services.archive.rootFolder() : config.googleDriveRootFolderId;
   ctx.runner = createStepRunner(ctx);
   const locked = action => withLock(config.dataDir, action);
   await locked(() => store.init());

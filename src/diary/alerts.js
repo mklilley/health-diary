@@ -53,9 +53,10 @@ export async function updateAlerts(ctx, meta, save) {
     incident[flag] = true;
     await ctx.store.writeState(state);
     const references = incident.references.slice(0, 6).join('\n');
-    const text = resolving
+    const body = resolving
       ? `✅ Health Diary issue resolved\n\n${key}\n${references}`
       : `⚠️ Health Diary needs attention\n\n${key}\n${references}\n\nUse /status for details.`;
+    const text = ctx.config.diaryLabel ? `Diary: ${ctx.config.diaryLabel} (${ctx.config.diaryUserId})\n\n${body}` : body;
     try {
       const result = await ctx.services.telegram.sendMessage(ctx.config.adminUserId, text);
       incident[`${flag}_message_id`] = result.message_id;
@@ -86,6 +87,6 @@ export async function updateAlerts(ctx, meta, save) {
   meta.attention.alert_sent = Object.values(meta.steps).some(step => step.alert_sent);
   meta.attention.resolved_alert_sent = Object.values(meta.steps).some(step => step.resolved_alert_sent);
   // Polling state and notification reservations share state.json.
-  if (meta.start_date) meta.notifications = state.notifications;
+  if (meta.start_date || meta.kind === 'polling') meta.notifications = state.notifications;
   await save(meta);
 }

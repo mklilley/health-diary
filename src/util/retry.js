@@ -6,7 +6,7 @@ export function isTransient(error) {
   const e = safeError(error);
   if (['DUPLICATE_REMOTE_OBJECT', 'REMOTE_OBJECT_CONFLICT', 'IMMUTABLE_CONTENT_CONFLICT', 'HEADER_MISMATCH',
     'DUPLICATE_REMOTE_KEY', 'MODEL_REFUSAL', 'CONFIGURATION_ERROR', 'FILE_TOO_LARGE', 'AUDIO_TOO_LARGE', 'INVALID_FILE_PATH',
-    'INVALID_AUDIO', 'EXPORT_SNAPSHOT_CHANGED', 'ENOENT', 'EACCES', 'ENOSPC', 'EIO'].includes(e.code)) return false;
+    'INVALID_AUDIO', 'EXPORT_SNAPSHOT_CHANGED', 'DIARY_ARCHIVE_INVALID', 'ENOENT', 'EACCES', 'ENOSPC', 'EIO'].includes(e.code)) return false;
   return !e.status || e.status === 408 || e.status === 409 || e.status === 429 || e.status >= 500;
 }
 
@@ -34,7 +34,7 @@ export function createStepRunner(ctx) {
         Object.assign(step, result || {}, { status: 'complete', completed_at: now().toISOString(), next_retry_at: null, last_error: null });
         delete step.first_failure_at;
         await save(meta);
-        log('operation_complete', { entry_id: meta.entry_id, date: meta.date, step: key });
+        log('operation_complete', { telegram_user_id: config.diaryUserId, entry_id: meta.entry_id, date: meta.date, step: key });
         return true;
       } catch (error) {
         const safe = safeError(error);
@@ -48,7 +48,7 @@ export function createStepRunner(ctx) {
         step.next_retry_at = new Date(now().getTime() + retryDelay).toISOString();
         if (ambiguous) { step.ambiguous_delivery = true; step.last_error = { ...safe, message: 'Telegram delivery uncertain; verify chat before manual recovery' }; }
         await save(meta);
-        log('operation_failed', { entry_id: meta.entry_id, date: meta.date, step: key, attempt: step.attempts, code: safe.code });
+        log('operation_failed', { telegram_user_id: config.diaryUserId, entry_id: meta.entry_id, date: meta.date, step: key, attempt: step.attempts, code: safe.code });
         if (!isTransient(error) || ambiguous || i === attempts - 1 || providerDelay > 60_000) return false;
         const delay = (config.retryBaseMs ?? 1000) * 2 ** i * (0.8 + random() * 0.4);
         await sleep(Math.min(60_000, Math.max(delay, Number.isFinite(providerDelay) ? providerDelay : 0)));

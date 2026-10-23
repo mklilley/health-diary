@@ -4,9 +4,11 @@ import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
+import { atomicWriteJson, readJson } from '../src/util/atomic-write.js';
 import { createTelegramService } from '../src/services/telegram.js';
 import { createOpenAIService } from '../src/services/openai.js';
-import { createDriveService, FOLDER_MIME } from '../src/services/google-drive.js';
+import { createDriveService, FOLDER_MIME, SHEET_MIME } from '../src/services/google-drive.js';
+import { createDiaryArchive } from '../src/services/diary-archive.js';
 import { createSheetsService, ENTRY_HEADERS, DAY_HEADERS } from '../src/services/google-sheets.js';
 import { safeServiceError } from '../src/services/errors.js';
 import { safeError } from '../src/util/logging.js';
@@ -186,6 +188,54 @@ test('Drive finds folders after ambiguous create and never makes blind duplicate
   assert.deepEqual(await drive.ensureFolder('parent', 'entries'), { id: 'file-1' });
   assert.equal(mock.creates, 1);
   assert.equal(mock.objects[0].mimeType, FOLDER_MIME);
+});
+
+test('diary archive provisioning recovers interrupted creates and preserves folder and Sheet IDs', async t => {
+  const { dir } = await fileFixture(t);
+  const mock = driveMock();
+  const drive = createDriveService(config, { client: mock.client });
+  const scoped = { ...config, dataDir: dir, diaryUserId: 101, diaryLabel: 'Alex', googleDriveRootFolderId: 'root' };
+  const ids = [];
+  const dependencies = { drive, sheetsFactory: config => ({ ensureTabs: async () => ids.push(config.googleSheetId) }) };
+  let services = createDiaryArchive(scoped, dependencies);
+  assert.equal(mock.creates, 0);
+  mock.loseCreate();
+  await assert.rejects(services.archive.rootFolder(), { code: 'ECONNRESET' });
+  assert.equal(await services.archive.rootFolder(), 'file-1');
+  mock.loseCreate();
+  await assert.rejects(services.sheets.ensureTabs(), { code: 'ECONNRESET' });
+  services = createDiaryArchive({ ...scoped, diaryLabel: 'Renamed' }, dependencies);
+  await services.sheets.ensureTabs();
+  await services.sheets.ensureTabs();
+  assert.equal(mock.creates, 2);
+  assert.deepEqual(ids, ['file-2', 'file-2']);
+  assert.deepEqual(mock.objects.map(file => [file.name, file.mimeType, file.parents]), [
+    ['101', FOLDER_MIME, ['root']], ['Diary Index', SHEET_MIME, ['file-1']],
+  ]);
+  const path = join(dir, 'archive.json');
+  const binding = await readJson(path);
+  assert.equal(binding.spreadsheet_id, 'file-2');
+  await assert.rejects(createDiaryArchive({ ...scoped, googleDriveRootFolderId: 'changed-root' }, dependencies).archive.rootFolder(), { code: 'DIARY_ARCHIVE_INVALID' });
+  await atomicWriteJson(path, { ...binding, telegram_user_id: 202 });
+  await assert.rejects(services.archive.rootFolder(), { code: 'DIARY_ARCHIVE_INVALID' });
+  await atomicWriteJson(path, binding);
+  mock.objects[1].parents = ['other-diary'];
+  await assert.rejects(services.sheets.ensureTabs(), { code: 'REMOTE_OBJECT_CONFLICT' });
+  mock.objects.length = 0;
+  await assert.rejects(services.archive.rootFolder(), { code: 'REMOTE_OBJECT_CONFLICT' });
+  assert.equal(mock.creates, 2, 'persisted IDs must never be silently replaced');
+});
+
+test('multi-user Google setup prepares the private root without creating a shared index', async () => {
+  let reads = 0;
+  const client = { files: { get: async () => {
+    reads++;
+    return { data: { id: 'root', mimeType: FOLDER_MIME, permissions: [{ type: 'user', role: 'owner' }] } };
+  } } };
+  assert.deepEqual(await provisionGoogleArchive({ ...config, googleDriveRootFolderId: 'root', diaryUsers: [] }, {}, {
+    client, sheetsFactory: () => assert.fail('No shared Sheet should be created'),
+  }), { rootId: 'root' });
+  assert.equal(reads, 1);
 });
 
 test('Drive recovers an ambiguous upload by matching original checksum and size', async (t) => {

@@ -52,7 +52,7 @@ export async function retryAggregateUploads(ctx, { force = false } = {}) {
         throw Object.assign(new Error('Saved export changed; request a fresh export'), { code: 'EXPORT_SNAPSHOT_CHANGED' });
       }
       if (!metadata.drive_folder_id) {
-        metadata.drive_folder_id = (await ctx.services.drive.ensureFolder(ctx.config.googleDriveRootFolderId, 'aggregates')).id;
+        metadata.drive_folder_id = (await ctx.services.drive.ensureFolder(await ctx.driveRoot(), 'aggregates')).id;
         await save(metadata);
       }
       const result = await ctx.services.drive.putFile({ parentId: metadata.drive_folder_id, name, path,

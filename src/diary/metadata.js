@@ -22,6 +22,7 @@ function validSteps(metadata, keys) {
 
 export function createStore(config, now) {
   const root = config.dataDir;
+  const validOwner = metadata => !config.requireDiaryOwner || metadata.telegram_user_id === config.diaryUserId;
   const entryPath = entry => join(root, 'entries', entry.date, entry.entry_id);
   const dayPath = day => join(root, 'days', typeof day === 'string' ? day : day.date);
   async function directories(path) {
@@ -37,6 +38,7 @@ export function createStore(config, now) {
           const entry = await readJson(join(root, 'entries', date, id, 'metadata.json'));
           if (entry.schema_version !== 1 || entry.entry_id !== id || entry.date !== date || !validSteps(entry, entrySteps)
             || !Number.isFinite(Date.parse(entry.received_at)) || !Number.isSafeInteger(entry.telegram_user_id)
+            || (config.requireDiaryOwner && (entry.telegram_user_id !== config.diaryUserId || entry.telegram_chat_id !== config.diaryUserId))
             || !Number.isSafeInteger(entry.telegram_message_id)) throw new Error('Invalid metadata');
           entries.push(entry);
           for (const [key, name] of [['transcription', 'transcript.md'], ['entry_summary', 'summary.md']]) {
@@ -53,7 +55,7 @@ export function createStore(config, now) {
     for (const date of (await directories(join(root, 'days'))).filter(validateDate)) {
       try {
         const day = await readJson(join(root, 'days', date, 'metadata.json'));
-        if (day.schema_version !== 1 || day.date !== date || !validSteps(day, daySteps)) throw new Error('Invalid metadata');
+        if (day.schema_version !== 1 || day.date !== date || !validOwner(day) || !validSteps(day, daySteps)) throw new Error('Invalid metadata');
         days.push(day);
         if (day.steps.daily_summary.status === 'complete' && !await exists(join(dayPath(day), 'summary.md'))) {
           issues.push({ date, id: date, operation: 'missing_daily_summary_file' });
@@ -69,27 +71,34 @@ export function createStore(config, now) {
     if (!validateDate(date)) throw new Error('Invalid calendar date');
     const day = await readJson(join(dayPath(date), 'metadata.json'), null);
     if (day) {
-      if (day.schema_version !== 1 || day.date !== date || !validSteps(day, daySteps)) throw new Error('Invalid day metadata');
+      if (day.schema_version !== 1 || day.date !== date || !validOwner(day) || !validSteps(day, daySteps)) throw new Error('Invalid day metadata');
       return day;
     }
     const fresh = makeDay(date);
+    if (config.requireDiaryOwner) fresh.telegram_user_id = config.diaryUserId;
     await writeDay(fresh);
     return fresh;
   }
   async function init() {
-    for (const name of ['entries', 'days', 'aggregates', 'status']) await mkdir(join(root, name), { recursive: true, mode: 0o700 });
     const path = join(root, 'state.json');
     let state = await readJson(path, null);
     if (!state) {
+      if (config.requireDiaryOwner && await exists(join(root, 'entries'))) {
+        throw new Error('Existing diary is missing its ownership state; repair required');
+      }
       const { entries, days } = await scan();
       const dates = [config.diaryStartDate || localDate(now()), ...entries.map(e => e.date), ...days.map(d => d.date)].sort();
-      state = { schema_version: 1, start_date: dates[0], last_poll_drained_at: null };
+      state = { schema_version: 1, start_date: dates[0], last_poll_drained_at: null,
+        ...(config.requireDiaryOwner ? { telegram_user_id: config.diaryUserId } : {}) };
       await atomicWriteJson(path, state);
     }
     if (state.schema_version !== 1 || !validateDate(state.start_date)) throw new Error('Invalid diary state');
+    if (config.requireDiaryOwner && state.telegram_user_id !== config.diaryUserId) throw new Error('Diary owner mismatch; migration or repair required');
+    for (const name of ['entries', 'days', 'aggregates', 'status']) await mkdir(join(root, name), { recursive: true, mode: 0o700 });
     return state;
   }
   return { root, entryPath, dayPath, scan, writeEntry, writeDay, getDay, init,
     readState: () => readJson(join(root, 'state.json')),
+    readPollingState: () => readJson(config.pollingStateFile || join(root, 'state.json')),
     writeState: state => atomicWriteJson(join(root, 'state.json'), state) };
 }

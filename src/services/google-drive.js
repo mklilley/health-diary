@@ -30,19 +30,21 @@ export function createDriveService(config, { auth, client = google.drive({ versi
   };
   const get = async (fileId) => (await client.files.get({ fileId, fields: FILE_FIELDS }, options)).data;
   const reference = (file) => ({ id: file.id, webViewLink: file.webViewLink || `https://drive.google.com/file/d/${file.id}/view` });
+  const ensureObject = (parentId, name, mimeType, fileId) => guarded('drive', async () => {
+    const existing = fileId ? await get(fileId) : await find(parentId, name);
+    if (existing || fileId) {
+      assertTarget(existing, parentId, name, mimeType);
+      return { id: existing.id };
+    }
+    const { data } = await client.files.create({
+      requestBody: { name, mimeType, parents: [parentId] }, fields: FILE_FIELDS,
+    }, options);
+    assertTarget(data, parentId, name, mimeType);
+    return { id: data.id };
+  });
   return {
-    ensureFolder: (parentId, name) => guarded('drive', async () => {
-      const existing = await find(parentId, name);
-      if (existing) {
-        assertTarget(existing, parentId, name, FOLDER_MIME);
-        return { id: existing.id };
-      }
-      const { data } = await client.files.create({
-        requestBody: { name, mimeType: FOLDER_MIME, parents: [parentId] }, fields: FILE_FIELDS,
-      }, options);
-      assertTarget(data, parentId, name, FOLDER_MIME);
-      return { id: data.id };
-    }),
+    ensureFolder: (parentId, name, fileId) => ensureObject(parentId, name, FOLDER_MIME, fileId),
+    ensureSpreadsheet: (parentId, name, fileId) => ensureObject(parentId, name, SHEET_MIME, fileId),
     putFile: ({ parentId, name, path, mimeType, fileId, mutable = false }) => guarded('drive', async () => {
       const hash = createHash('md5');
       let size = 0;

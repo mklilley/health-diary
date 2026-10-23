@@ -6,13 +6,17 @@ export function messageRole(message, config) {
   if (!Number.isSafeInteger(message.from?.id) || !Number.isSafeInteger(message.chat?.id)) return null;
   // All replies containing diary material go to the authenticated private user.
   if (message.chat.id !== message.from.id) return null;
-  if (message.from.id === config.diaryUserId) return 'diary_user';
   if (message.from.id === config.adminUserId) return 'admin';
+  if (isDiaryUser(message.from.id, config)) return 'diary_user';
   return null;
 }
 
+function isDiaryUser(id, config) {
+  return config.diaryUsers ? config.diaryUsers.some(user => user.telegramUserId === id) : id === config.diaryUserId;
+}
+
 export function isDiaryVoice(update, config) {
-  return messageRole(update?.message, config) === 'diary_user' && Boolean(update.message.voice);
+  return Boolean(messageRole(update?.message, config) && isDiaryUser(update.message.from.id, config) && update.message.voice);
 }
 
 /** Edited messages, channel posts, groups and unknown senders are ignored. */
@@ -22,17 +26,17 @@ export async function handleUpdate(update, { app, services, config, process = tr
   if (!role) return null;
 
   if (message.voice) {
-    if (role === 'admin') {
+    if (!isDiaryUser(message.from.id, config)) {
       await services.telegram.sendMessage(message.chat.id, 'Admin voice notes are not added to the diary. Type /help for admin commands.');
       return null;
     }
     const entry = await app.receiveVoice(message);
-    if (process) await app.processEntry(entry.entry_id);
+    if (process) await app.processEntry(entry.entry_id, message.from.id);
     return entry;
   }
 
   const command = parseCommand(message.text);
-  const exporting = role === 'admin' && command?.name === 'export' && !command.argument;
+  const exporting = !app.multiUser && role === 'admin' && command?.name === 'export' && !command.argument;
   if (exporting) await services.telegram.sendMessage(message.chat.id, 'Preparing the diary export. I will send Drive links when it is ready.');
   let reply;
   try { reply = await commandReply(message.text, { role, app, now }); }

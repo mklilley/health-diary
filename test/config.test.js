@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { loadConfig } from '../src/config.js';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { loadConfig, validateDiaryUsers } from '../src/config.js';
 
 const env = {
   TELEGRAM_DIARY_USER_ID: '1001', TELEGRAM_ADMIN_USER_ID: '1002',
@@ -58,4 +61,32 @@ test('model and path overrides are honored', () => {
   assert.equal(config.entrySummaryModel, 'configured-entry');
   assert.equal(config.dailySummaryModel, 'configured-day');
   assert.equal(config.dataDir, '/tmp/custom-data');
+});
+
+test('multi-user configuration allows the admin to have a diary and refuses mixed legacy settings', async t => {
+  const cwd = await mkdtemp(join(tmpdir(), 'health-diary-users-'));
+  t.after(() => rm(cwd, { recursive: true, force: true }));
+  const users = [{ telegramUserId: 1002, label: ' Alex ' }, { telegramUserId: 1001, label: 'Sam' }];
+  await writeFile(join(cwd, 'users.json'), JSON.stringify(users));
+  const settings = { ...env, TELEGRAM_DIARY_USER_ID: '', GOOGLE_SHEET_ID: '', DIARY_USERS_FILE: 'users.json' };
+  const config = loadConfig({ env: settings, cwd });
+  assert.equal(config.diaryUsersFile, join(cwd, 'users.json'));
+  assert.equal(config.diaryUsers[0].telegramUserId, config.adminUserId);
+  assert.equal(config.diaryUsers[0].label, 'Alex');
+  assert.ok(Object.isFrozen(config.diaryUsers) && Object.isFrozen(config.diaryUsers[0]));
+  assert.equal(config.diaryUserId, null);
+  assert.equal(config.googleSheetId, null);
+  for (const key of ['TELEGRAM_DIARY_USER_ID', 'GOOGLE_SHEET_ID', 'DIARY_START_DATE']) {
+    assert.throws(() => loadConfig({ env: { ...settings, [key]: 'legacy-setting' }, cwd }), /migration/);
+  }
+  await writeFile(join(cwd, 'users.json'), 'private-invalid-json');
+  assert.throws(() => loadConfig({ env: settings, cwd }), error => /DIARY_USERS_FILE/.test(error.message) && !/private-invalid/.test(error.message));
+});
+
+test('user registry rejects ambiguous IDs, invalid labels and unsupported fields', () => {
+  const user = { telegramUserId: 101, label: 'Alex' };
+  for (const value of [null, {}, [], [user, user], [null],
+    ...['101', 0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1].map(telegramUserId => [{ ...user, telegramUserId }]),
+    ...['', '  ', 'A\nB', 'A\tB', 'A\u2028B', 'a'.repeat(81)].map(label => [{ ...user, label }]),
+    [{ ...user, rootFolder: 'somewhere' }]]) assert.throws(() => validateDiaryUsers(value), { code: 'CONFIGURATION_ERROR' });
 });

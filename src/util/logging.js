@@ -2,7 +2,7 @@ const networkCodes = new Set(['ETIMEDOUT', 'ECONNRESET', 'ENOTFOUND', 'EAI_AGAIN
   'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_BODY_TIMEOUT', 'UND_ERR_SOCKET']);
 const localCodes = new Set(['ENOENT', 'EACCES', 'ENOSPC', 'EIO', 'ELOCKED', 'ECOMPROMISED']);
 const serviceCodes = new Set(['DUPLICATE_REMOTE_OBJECT', 'REMOTE_OBJECT_CONFLICT', 'IMMUTABLE_CONTENT_CONFLICT',
-  'UPLOAD_CHECKSUM_MISMATCH', 'EXPORT_SNAPSHOT_CHANGED', 'HEADER_MISMATCH', 'DUPLICATE_REMOTE_KEY', 'INVALID_RESPONSE', 'EMPTY_RESPONSE',
+  'UPLOAD_CHECKSUM_MISMATCH', 'EXPORT_SNAPSHOT_CHANGED', 'DIARY_ARCHIVE_INVALID', 'HEADER_MISMATCH', 'DUPLICATE_REMOTE_KEY', 'INVALID_RESPONSE', 'EMPTY_RESPONSE',
   'INCOMPLETE_RESPONSE', 'MODEL_REFUSAL', 'REQUEST_FAILED', 'REQUEST_ABORTED', 'CONFIGURATION_ERROR',
   'FILE_TOO_LARGE', 'AUDIO_TOO_LARGE', 'INCOMPLETE_AUDIO', 'INVALID_FILE_PATH', 'INVALID_AUDIO', 'DOWNLOAD_SIZE_MISMATCH', 'INVALID_TELEGRAM_CURSOR', 'INVALID_TELEGRAM_RESPONSE']);
 
@@ -18,7 +18,7 @@ export function safeError(error) {
 // Call sites pass only operational identifiers/counters. Never pass provider error bodies.
 export function log(event, fields = {}) {
   const safe = {};
-  for (const key of ['entry_id', 'date', 'step', 'attempt', 'code', 'count']) {
+  for (const key of ['telegram_user_id', 'entry_id', 'date', 'step', 'attempt', 'code', 'count']) {
     if (fields[key] !== undefined) safe[key] = fields[key];
   }
   console.log(JSON.stringify({ time: new Date().toISOString(), event, ...safe }));

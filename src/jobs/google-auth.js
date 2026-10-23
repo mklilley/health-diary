@@ -98,6 +98,8 @@ export async function provisionGoogleArchive(config, auth, { client = google.dri
     return file.id;
   };
   const rootId = await ensure({ id: config.googleDriveRootFolderId, parentId: 'root', name: 'Health Diary', mimeType: FOLDER_MIME });
+  // Each diary provisions its own index lazily; never create a shared index.
+  if (config.diaryUsers) return { rootId };
   const sheetId = await ensure({ id: config.googleSheetId, parentId: rootId, name: 'Diary Index', mimeType: SHEET_MIME });
   await sheetsFactory({ ...config, googleSheetId: sheetId }, { auth }).ensureTabs();
   return { rootId, sheetId };
@@ -109,7 +111,7 @@ export async function runGoogleAuth() {
   const auth = await authorizeGoogle(config);
   console.log('Refresh token saved with private permissions. Preparing the private archive and index…');
   const { rootId, sheetId } = await provisionGoogleArchive(config, auth);
-  console.log(`Add these values to .env:\nGOOGLE_DRIVE_ROOT_FOLDER_ID=${rootId}\nGOOGLE_SHEET_ID=${sheetId}`);
+  console.log(`Add these values to .env:\nGOOGLE_DRIVE_ROOT_FOLDER_ID=${rootId}${sheetId ? `\nGOOGLE_SHEET_ID=${sheetId}` : ''}`);
   console.log('Do not run a second copy of the bot against the same Telegram token or diary archive.');
 }
 

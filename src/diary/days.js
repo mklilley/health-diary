@@ -7,7 +7,7 @@ import { version as dailyPromptVersion } from '../prompts/daily-summary-v1.js';
 
 async function folder(ctx, day) {
   if (day.drive_folder_id) return day.drive_folder_id;
-  const base = await ctx.services.drive.ensureFolder(ctx.config.googleDriveRootFolderId, 'days');
+  const base = await ctx.services.drive.ensureFolder(await ctx.driveRoot(), 'days');
   const target = await ctx.services.drive.ensureFolder(base.id, day.date);
   day.drive_folder_id = target.id;
   await ctx.store.writeDay(day);
@@ -16,7 +16,7 @@ async function folder(ctx, day) {
 
 export async function processDay(ctx, day, { force = false } = {}) {
   const { store, runner, services } = ctx;
-  const state = await store.readState();
+  const state = await store.readPollingState();
   const { entries, issues } = await store.scan();
   const sources = entries.filter(entry => entry.date === day.date);
   const summaryStep = day.steps.daily_summary;
@@ -120,7 +120,7 @@ export async function sendReminder(ctx) {
   const { entries, issues } = await ctx.store.scan();
   if (issues.some(issue => issue.date === date)) return { sent: false, reason: 'source_metadata_needs_attention' };
   if (entries.some(entry => entry.date === date)) return { sent: false, reason: 'voice_received' };
-  const state = await ctx.store.readState();
+  const state = await ctx.store.readPollingState();
   const pollAge = current.getTime() - Date.parse(state.last_poll_drained_at);
   if (!state.last_poll_drained_at || pollAge < 0 || pollAge > 300_000 || localDate(state.last_poll_drained_at) !== date) {
     return { sent: false, reason: 'waiting_for_recent_telegram_poll' };

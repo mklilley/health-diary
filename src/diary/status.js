@@ -34,12 +34,13 @@ export async function statusIndex(ctx) {
     for (const [key, step] of Object.entries(aggregates.steps)) add('exports', key, step);
   }
   const state = await ctx.store.readState();
+  const polling = await ctx.store.readPollingState();
   const knownDates = new Set([...days.map(day => day.date), ...issues.filter(issue => issue.operation === 'invalid_day_metadata').map(issue => issue.date)]);
   for (let date = state.start_date; date <= finalisationCutoff(ctx.now()); date = addDays(date, 1)) {
     if (!knownDates.has(date)) operations.push({ id: date, operation: 'daily_summary', status: 'pending', attempts: 0,
       last_error: { code: 'DAILY_JOB_PENDING', message: 'This due day has not been finalised; run the daily or retry job' } });
   }
-  if (state.steps?.telegram_poll) add('bot', 'telegram_poll', state.steps.telegram_poll);
+  if (polling.steps?.telegram_poll) add('bot', 'telegram_poll', polling.steps.telegram_poll);
   for (const [id, incident] of Object.entries(state.notifications || {})) {
     if (incident.delivery_uncertain || incident.notification_error) operations.push({ id, operation: 'admin_notification',
       status: 'attention', attempts: 1, last_error: { code: 'ALERT_DELIVERY_UNCONFIRMED', message: 'Admin notification delivery unconfirmed; inspect the private chat and data/state.json' } });
@@ -51,7 +52,7 @@ export async function statusIndex(ctx) {
     outstanding_retries: operations.filter(op => op.status !== 'attention').length,
     needs_attention: operations.filter(op => op.status === 'attention').length,
     last_completed_daily_summary: days.filter(day => day.steps.daily_summary.status === 'complete').at(-1)?.date || null,
-    last_poll_drained_at: state.last_poll_drained_at,
+    last_poll_drained_at: polling.last_poll_drained_at,
     last_export: aggregates.upload_requested === true && aggregates.snapshot ? exportResult(aggregates) : null,
     operations };
 }
@@ -64,6 +65,7 @@ export async function rebuildStatus(ctx) {
     `Last completed daily summary: ${index.last_completed_daily_summary || 'none'}`, '',
     `Last Telegram backlog drain: ${index.last_poll_drained_at || 'not yet recorded'}`, '',
     `Last requested export: ${index.last_export?.snapshot.generated_at || 'none'}`];
+  if (ctx.config.diaryLabel) lines.splice(2, 0, `Diary: ${ctx.config.diaryLabel} (${ctx.config.diaryUserId})`, '');
   if (index.last_export) {
     const { snapshot, uploads } = index.last_export;
     lines.push(`Entries recorded at export: ${snapshot.entry_count}`,

@@ -2,6 +2,7 @@
 credentials/
 tokens/
 data/
+users.json
 .DS_Store
 logs
 *.log

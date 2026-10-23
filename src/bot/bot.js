@@ -32,7 +32,7 @@ export async function runBot({
     let failures = 0;
     let cycle = 0;
     let recoveryPending = recoverOnStart;
-    const entries = new Set();
+    const entries = new Map();
     const interactions = [];
 
     logger('bot_started');
@@ -55,7 +55,8 @@ export async function runBot({
             let interaction;
             if (isDiaryVoice(update, config)) {
               const entry = await handleUpdate(update, { app, services, config, process: false, now });
-              entries.add(entry.entry_id);
+              const ownerId = update.message.from.id;
+              entries.set(`${ownerId}:${entry.entry_id}`, { entryId: entry.entry_id, ownerId });
             } else if (messageRole(update.message, config)) interaction = update;
             const committedOffset = update.update_id + 1;
             await atomicWriteJson(cursorPath, { schema_version: 1, next_offset: committedOffset });
@@ -80,11 +81,11 @@ export async function runBot({
           catch (error) { logger('startup_recovery_failed', safeError(error)); }
           recoveryPending = false;
         }
-        for (const entryId of entries) {
+        for (const [key, { entryId, ownerId }] of entries) {
           if (signal?.aborted) break;
-          try { await app.processEntry(entryId); }
-          catch (error) { logger('entry_processing_failed', { entry_id: entryId, ...safeError(error) }); }
-          entries.delete(entryId);
+          try { await app.processEntry(entryId, ownerId); }
+          catch (error) { logger('entry_processing_failed', { telegram_user_id: ownerId, entry_id: entryId, ...safeError(error) }); }
+          entries.delete(key);
         }
         while (interactions.length && !signal?.aborted) {
           const update = interactions.shift();
