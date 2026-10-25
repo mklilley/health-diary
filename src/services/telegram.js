@@ -51,7 +51,7 @@ export function createTelegramService(config, { fetchImpl = globalThis.fetch } =
     setAdminCommands: chatId => api('setMyCommands', {
       scope: { type: 'chat', chat_id: chatId },
       commands: [{ command: 'admin', description: 'Choose a diary and open admin controls' },
-        { command: 'help', description: 'Help and diary controls' }, { command: 'cancel', description: 'Close admin controls and clear selection' }],
+        { command: 'cancel', description: 'Close admin controls and clear selection' }],
     }, undefined, Math.min(config.httpTimeoutMs, 10000)),
     async sendMessage(chatId, text, { replyMarkup, prefix = '' } = {}) {
       if (typeof prefix !== 'string' || prefix.length > 500) throw new ServiceError('telegram', 'INVALID_MESSAGE_PREFIX');

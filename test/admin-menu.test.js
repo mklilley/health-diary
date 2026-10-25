@@ -72,7 +72,7 @@ test('admin chooses a named diary and every button uses that owner, including ex
   assert.deepEqual(f.calls, []);
   await f.tap('Alex (101)');
   assert.match(f.latest().text, /^Diary: Alex \(101\)/);
-  for (const [label, action] of [['Today', 'day'], ['Latest day', 'last'], ['Status', 'status'], ['Retry', 'retry'], ['Export', 'export']]) {
+  for (const [label, action] of [['Today', 'day'], ['Latest day', 'last'], ['Status', 'status'], ['Retry pending', 'retry'], ['Export', 'export']]) {
     const previous = f.sent.length;
     await f.tap(label);
     assert.ok(f.calls.some(call => call[0] === action && call[1] === 101));
@@ -92,6 +92,10 @@ test('admin chooses a named diary and every button uses that owner, including ex
 
 test('shortcuts require selection, name their target, and Close or cancel clears only admin selection', async () => {
   const f = fixture();
+  await f.send('/help');
+  const help = f.sent.at(-1).text;
+  assert.match(help, /Open \/admin/);
+  assert.equal(f.latest(), undefined);
   for (const text of ['/today', '/last', '/day 2026-09-09', '/status', '/export', '/retry']) await f.send(text);
   assert.deepEqual(f.calls, []);
   await f.tap('Alex (101)');
@@ -99,8 +103,10 @@ test('shortcuts require selection, name their target, and Close or cancel clears
     await f.send(text);
     assert.match(f.latest().text, /^Diary: Alex \(101\)/);
   }
+  const menu = f.latest();
   await f.send('/help');
-  assert.match(f.latest().text, /Voice notes always go into your own diary/);
+  assert.equal(f.sent.at(-1).text, help);
+  assert.equal(f.latest(), menu);
   await f.tap('Close');
   assert.match(f.latest().text, /No diary is selected/);
   const count = f.calls.length;
@@ -236,7 +242,7 @@ test('provider and diary failures preserve ownership, expose no raw errors and d
   assert.doesNotMatch(f.latest().text, /Private|secret content/);
   assert.equal(f.calls.filter(call => call[0] === 'export').length, 0);
   f.faults.clear();
-  const query = f.callback('Retry');
+  const query = f.callback('Retry pending');
   const send = f.services.telegram.sendMessage;
   f.services.telegram.sendMessage = async (...args) => {
     if (String(args[1]).startsWith('Retry complete')) throw new Error('Private result delivery failure');

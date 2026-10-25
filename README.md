@@ -63,7 +63,7 @@ Only approved users' **voice notes** create entries. Recordings always belong to
 
 With scheduled jobs installed, the bot checks for a no-entry reminder from **22:00** and summarises the previous day from **02:00**, London time. Processing or downtime can delay completion.
 
-Open **admin** from Telegram's command menu (or send `/admin`), choose a person, and use **Today**, **Latest day**, **Choose date**, **Export**, **Status** or **Retry**. **Switch person** changes the selection; **Close** clears it. Ordinary users only record entries. [Menu and configuration details](docs/multi-user.md).
+Open **admin** from Telegram's command menu (or send `/admin`), choose a person, and use **Today**, **Latest day**, **Choose date**, **Export**, **Status** or **Retry pending**. **Switch person** changes the selection; **Close** clears it. Ordinary users only record entries. [Menu and configuration details](docs/multi-user.md).
 
 **Latest day** skips empty days. It shows the completed daily summary when available, otherwise the saved entry summaries with processing still pending marked.
 

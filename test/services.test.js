@@ -99,7 +99,7 @@ test('Telegram requests callback updates and scopes the command menu to the admi
   assert.deepEqual(calls[2], { method: 'editMessageReplyMarkup', body: { chat_id: 202, message_id: 7, reply_markup: { inline_keyboard: [] } } });
   assert.equal(calls[3].method, 'setMyCommands');
   assert.deepEqual(calls[3].body.scope, { type: 'chat', chat_id: 202 });
-  assert.deepEqual(calls[3].body.commands.map(command => command.command), ['admin', 'help', 'cancel']);
+  assert.deepEqual(calls[3].body.commands.map(command => command.command), ['admin', 'cancel']);
 });
 
 test('Telegram API errors retain status without secrets or raw provider descriptions', async () => {

@@ -75,7 +75,7 @@ export function createAdminMenu({ app, config, services, now = () => new Date() 
     await publish(text, user, button => [
       [button('Today', 'today'), button('Latest day', 'last')],
       [button('Choose date', 'date'), button('Export', 'export')],
-      [button('Status', 'status'), button('Retry', 'retry')],
+      [button('Status', 'status'), button('Retry pending', 'retry')],
       [button('Switch person', 'switch'), button('Close', 'close')],
     ]);
     selectedId = user.telegramUserId;
@@ -107,7 +107,7 @@ export function createAdminMenu({ app, config, services, now = () => new Date() 
       if (['export', 'retry'].includes(command?.name) && !command.argument) {
         await telegram.sendMessage(config.adminUserId, command.name === 'export'
           ? 'Preparing the diary export. I will send the Drive links when it is ready.'
-          : 'Retrying outstanding work for this diary.', { prefix: header(user) });
+          : 'Retrying pending work for this diary.', { prefix: header(user) });
       }
       reply = await commandReply(text, { role: 'admin', app: scoped, now });
     } catch (error) {
@@ -123,10 +123,9 @@ export function createAdminMenu({ app, config, services, now = () => new Date() 
       const command = parseCommand(message.text);
       if (command?.name === 'cancel') return close();
       if (command?.name === 'admin' || command?.name === 'start') return picker();
+      if (command?.name === 'help') return telegram.sendMessage(config.adminUserId, 'Open /admin to choose a diary and use the controls.');
       const user = userFor(selectedId);
       if (!user) return picker();
-      if (command?.name === 'help') return actions(user,
-        `Use the buttons below. You can also use /today, /yesterday, /last, /day YYYY-MM-DD, /status, /retry and /export for this diary.\n\n/admin switches person. /cancel closes the admin menu.\n\n${voiceHint()}`);
       if (awaitingDate && !command) {
         const date = message.text?.trim();
         return validateDate(date) ? run(`/day ${date}`, user) : dates(user, undefined, 'Please choose a day or send a valid date, for example 2026-09-15.');

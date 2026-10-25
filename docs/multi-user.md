@@ -29,7 +29,9 @@ Scheduled jobs visit each configured diary and report failures per person. A fai
 
 ## Using the admin menu in multi-user mode
 
-Open **admin** from Telegram's command menu, or send `/admin`. Tap a person's label and ID, then use **Today**, **Latest day**, **Choose date**, **Export**, **Status** or **Retry**. Choose date opens a calendar with month navigation; typing `YYYY-MM-DD` there also works. Every result identifies the diary, including each part of a long reply.
+Open **admin** from Telegram's command menu, or send `/admin`. Tap a person's label and ID, then use **Today**, **Latest day**, **Choose date**, **Export**, **Status** or **Retry pending**. Choose date opens a calendar with month navigation; typing `YYYY-MM-DD` there also works. Every result identifies the diary, including each part of a long reply.
+
+**Retry pending** tries unfinished processing and uploads for the selected diary immediately. Completed steps are skipped. Scheduled jobs also retry automatically.
 
 **Switch person** returns to the list. **Close** (or `/cancel`) clears the admin selection; it does not delete records or disable voice recording. Voice notes always belong to the sender, even while viewing someone else's diary. Admins need an entry in `users.json` to record voice notes themselves.
 
