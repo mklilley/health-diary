@@ -21,6 +21,7 @@
     "rebuild-aggregates": "node src/jobs/rebuild-aggregates.js",
     "day": "node src/jobs/show-day.js",
     "google-auth": "node src/jobs/google-auth.js",
+    "sync-users": "node src/jobs/sync-users.js",
     "test": "node --test test/*.test.js",
     "check": "node --check ecosystem.config.cjs && node --test test/*.test.js"
   },

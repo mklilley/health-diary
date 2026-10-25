@@ -235,7 +235,7 @@ test('one failed provider or damaged diary does not stop another diary retrying'
   assert.ok(f.sent.some(message => message.chatId === 202 && message.text.startsWith('Recorded')));
   await atomicWriteJson(f.userPath(101, 'state.json'), { schema_version: 1, start_date: '2026-09-09', telegram_user_id: 999 });
   const second = await f.app.retry();
-  assert.deepEqual(second.errors.map(error => error.telegram_user_id), [101]);
+  assert.deepEqual([...new Set(second.errors.map(error => error.telegram_user_id))], [101]);
   assert.deepEqual(second.diaries.map(diary => diary.telegram_user_id), [202]);
   assert.match(await f.app.status(), /Diary 101: unavailable/);
   assert.ok(!f.sent.some(message => message.chatId === 999));
@@ -282,4 +282,42 @@ test('both storage modes refuse an incompatible layout without moving or overwri
   assert.equal(await exists(join(legacy, 'users')), false);
   assert.equal(await exists(join(legacy, 'layout.json')), false);
   assert.equal((await readJson(join(legacy, 'state.json'))).start_date, '2026-01-01');
+});
+
+test('Drive owner labels synchronize changes only, retry independently, and never generate health exports', async t => {
+  const f = await fixture(t);
+  const uploads = [];
+  let failOwner = null;
+  const putFile = f.services.drive.putFile;
+  f.services.drive.putFile = async options => {
+    uploads.push(options);
+    if (options.name === 'owner.txt' && options.parentId === failOwner) throw Object.assign(new Error('Synthetic Drive outage'), { status: 503 });
+    return putFile(options);
+  };
+  assert.equal((await f.app.syncDirectory()).updated, 3);
+  const firstBindings = await Promise.all([101, 202].map(id => readJson(f.userPath(id, 'archive.json'))));
+  const firstIds = [...f.files.values()].map(file => file.id);
+  uploads.length = 0;
+  assert.equal((await f.app.syncDirectory()).updated, 0);
+  assert.deepEqual(uploads, []);
+  const config = { ...f.config, diaryUsers: [{ telegramUserId: 101, label: 'Renamed Alex' }, { telegramUserId: 202, label: 'Renamed Sam' }] };
+  const app = await createMultiDiary({ ...f.options, config });
+  failOwner = firstBindings[0].drive_folder_id;
+  const failed = await app.syncDirectory();
+  assert.deepEqual(failed.errors.map(error => error.telegram_user_id), [101]);
+  assert.equal(failed.updated, 2);
+  assert.match(await (await app.forUser(101)).status(), /drive_owner_labels/);
+  assert.doesNotMatch(await (await app.forUser(202)).status(), /drive_owner_labels/);
+  assert.match(f.files.get(`${firstBindings[1].drive_folder_id}/owner.txt`).content, /Renamed Sam/);
+  failOwner = null;
+  uploads.length = 0;
+  assert.equal((await app.syncDirectory()).updated, 1);
+  assert.equal(uploads.length, 1);
+  assert.match(f.files.get('root/diary-users.txt').content, /101\tRenamed Alex/);
+  assert.match(f.files.get(`${firstBindings[0].drive_folder_id}/owner.txt`).content, /Renamed Alex/);
+  assert.deepEqual([...f.files.values()].map(file => file.id), firstIds);
+  assert.deepEqual(await Promise.all([101, 202].map(id => readJson(f.userPath(id, 'archive.json')))), firstBindings);
+  assert.equal(f.summaries.length, 0);
+  assert.equal(f.sheets.size, 0);
+  assert.equal([...f.files.values()].filter(file => file.name.startsWith('all-')).length, 0);
 });

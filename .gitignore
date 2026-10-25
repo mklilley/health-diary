@@ -3,6 +3,7 @@ credentials/
 tokens/
 data/
 users.json
+local-migration/
 .DS_Store
 logs
 *.log

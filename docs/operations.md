@@ -9,7 +9,8 @@ Run these from the repository directory, as the same Unix account that runs the 
 ```bash
 npm run status
 npm run retry
-npm run day -- 2026-09-09
+npm run day -- 2026-09-09 123456789
+npm run sync-users
 npm run rebuild-status
 npm run rebuild-aggregates
 pm2 status
@@ -18,6 +19,8 @@ pm2 restart health-diary-bot
 ```
 
 The status, day and rebuild commands work without cloud credentials. `npm run retry` respects saved retry times; Telegram's `/retry` forces an immediate pass.
+
+Replace the example ID in the day command with the diary owner's ID. CLI retry and rebuild commands visit all configured diaries. Telegram admin commands apply only to the person selected through `/admin`.
 
 `npm run rebuild-aggregates` rebuilds local combined files only and cancels any pending export uploads. Use the administrator's Telegram `/export` command to generate and upload a fresh snapshot to Drive.
 
@@ -36,15 +39,18 @@ sudo journalctl -u health-diary-daily.service -n 50 --no-pager
 
 | Path | Contents |
 | --- | --- |
-| `data/entries/YYYY-MM-DD/ENTRY_ID/` | `audio.ogg`, `transcript.md`, `summary.md`, `metadata.json` |
-| `data/days/YYYY-MM-DD/` | Daily `summary.md` and `metadata.json` |
-| `data/aggregates/` | Most recently generated combined files, snapshot details and upload state |
-| `data/status/STATUS.md` | Human-readable processing status |
-| `data/status/index.json` | Rebuildable status cache |
-| `data/state.json` | Start date, polling state and shared alert reservations |
+| `data/users/<ID>/entries/YYYY-MM-DD/ENTRY_ID/` | `audio.ogg`, `transcript.md`, `summary.md`, `metadata.json` |
+| `data/users/<ID>/days/YYYY-MM-DD/` | Daily `summary.md` and `metadata.json` |
+| `data/users/<ID>/aggregates/` | Most recently generated combined files, snapshot details and upload state |
+| `data/users/<ID>/status/STATUS.md` | Human-readable processing status |
+| `data/users/<ID>/status/index.json` | Rebuildable status cache |
+| `data/users/<ID>/state.json` | Diary owner, start date and alert reservations |
+| `data/users/<ID>/archive.json` | Stable Drive folder and Sheet IDs |
+| `data/polling.json` | Shared polling health and connection-alert reservations |
+| `data/directory.json` | Generated owner-label file IDs, hashes and sync errors |
 | `data/telegram.json` | Durable Telegram update offset |
 
-Drive automatically archives individual entry and day folders. Its `aggregates` folder is updated when an administrator requests an export. The Sheet has an `Entries` tab with entry ID, received time, the exact stored short summary, audio link and transcript link. Its `Days` tab has date, daily summary and entry count.
+Drive archives each diary under its numeric user ID. The root `diary-users.txt` and per-folder `owner.txt` identify the owners. Individual entry and day folders update automatically; each diary's `aggregates` folder updates on an administrator's export request. Its Sheet has `Entries` and `Days` tabs. Labels are generated from `users.json`; edit that file and run `npm run sync-users` rather than editing the generated text files.
 
 Audio and raw transcripts are primary records. Per-entry and per-day metadata control processing. Summaries are derived; status, Sheets and aggregates are views. Local audio stays by default. With `RETAIN_LOCAL_AUDIO=false`, it can be removed only after transcription and verified Drive archival.
 
@@ -52,7 +58,7 @@ Deleting a status file or aggregate does not lose primary records: rebuild it. M
 
 ## Exporting combined diary files
 
-Send `/export` in the administrator's private chat. It combines saved text into `all-transcripts.md`, `all-entry-summaries.md` and `all-daily-summaries.md`, and replies with Drive links. Each request replaces the previous snapshot using the same Drive files and links. It makes no AI requests and does not alter individual records.
+Select the person through `/admin`, then tap **Export** or send `/export`. It combines their saved text into `all-transcripts.md`, `all-entry-summaries.md` and `all-daily-summaries.md`, and replies with Drive links. Each request replaces the previous snapshot using the same Drive files and links. It makes no AI requests and does not alter individual records.
 
 The reply and files show when the snapshot was generated, how much text was included, entries still processing (including pending uploads or acknowledgements), and due daily summaries not yet saved. An export uses what is already saved; it does not wait for unfinished processing or generate missing summaries. Request another export after that work finishes if you need it included.
 
@@ -72,7 +78,7 @@ Ordinary logs omit health content and secrets. Explicit day-view commands and so
 
 ## Reminder and daily-summary rules
 
-- A received diary voice note counts towards the reminder even if processing fails. Text and administrator activity do not count.
+- A received voice note counts towards its sender's reminder even if processing fails. Text and admin commands do not count.
 - Reminders send only between 22:00 and midnight on the current London date, after a recent successful poll. A previous day's missed reminder is not sent the next morning.
 - Daily summaries use all full transcripts in received order. Incomplete transcription or an undrained Telegram backlog delays finalisation.
 - Catch-up begins at the saved diary start date. Zero-entry days complete without an AI call.
@@ -114,11 +120,11 @@ For an uncertain acknowledgement, stop all writers using the [update procedure](
 - If the recipient confirms it did not arrive, set that step to `retry`, clear `next_retry_at` and remove `ambiguous_delivery` to permit a new attempt.
 - If delivery cannot be established, leave it for attention.
 
-Preserve attempts and every source/AI step. Save valid JSON atomically, then restart. Never clear a reminder reservation to force another reminder for the same day. Shared admin-alert reservations live in `data/state.json`.
+Preserve attempts and every source/AI step. Save valid JSON atomically, then restart. Never clear a reminder reservation to force another reminder for the same day. Diary alert reservations live in `data/users/<ID>/state.json`; shared connection alerts live in `data/polling.json`.
 
 ## Restoring a lost data directory
 
-Stop all writers. Securely restore the archived `entries/` and `days/` trees from Drive into `data/`, preserving filenames. Restore credentials separately, then inspect metadata, Drive IDs, the diary start date and Telegram delivery state before reconnecting. Rebuild status, then retry. Use `/export` when you next need combined files.
+Stop all writers. Restore each archived `entries/` and `days/` tree into its owner's `data/users/<ID>/`, preserving filenames. Restore the user registry, ownership state, archive bindings and shared Telegram state from a trusted backup, and credentials separately. Inspect metadata, Drive IDs, start dates and delivery reservations before reconnecting. Rebuild status, then retry. Use `/export` when you next need combined files.
 
 Remote metadata is a snapshot and may lag local delivery reservations. Review uncertain sends before resuming. There is no automated disaster-restore command, and Drive cannot recover files that never uploaded.
 

@@ -5,6 +5,7 @@ import { withLock } from '../util/lock.js';
 import { log, safeError } from '../util/logging.js';
 import { createDiary } from './index.js';
 import { createPollingState } from './polling.js';
+import { syncDirectory } from './directory.js';
 
 export async function createMultiDiary({ config, services = {}, now = () => new Date(), ...options }) {
   const users = validateDiaryUsers(config.diaryUsers);
@@ -27,6 +28,7 @@ export async function createMultiDiary({ config, services = {}, now = () => new 
     dataDir: join(config.dataDir, 'users', String(user.telegramUserId)),
     diaryStartDate: null, googleSheetId: null,
     pollingStateFile: join(config.dataDir, 'polling.json'),
+    directoryStateFile: join(config.dataDir, 'directory.json'),
   })]));
   async function forUser(id) {
     const scoped = configs.get(id);
@@ -49,16 +51,26 @@ export async function createMultiDiary({ config, services = {}, now = () => new 
   // Establish a start date for every enabled diary, even before its first voice
   // note. A corrupt diary must not prevent other diaries' scheduled work.
   await each(async () => undefined);
+  async function syncUsers() {
+    try { return await syncDirectory({ config: { ...config, diaryUsers: users }, services, configs, now }); }
+    catch (error) {
+      const failure = { target: 'directory', ...safeError(error) };
+      log('directory_sync_failed', failure);
+      return { errors: [failure] };
+    }
+  }
   return {
-    multiUser: true, users, forUser,
+    multiUser: true, users, forUser, syncDirectory: syncUsers,
     ...polling,
     receiveVoice: async message => (await forUser(message.from?.id)).receiveVoice(message),
     processEntry: async (entryId, ownerId) => (await forUser(ownerId)).processEntry(entryId),
     retry: async args => {
       const result = await each(app => app.retry(args));
+      const directory = await syncUsers();
+      result.errors.push(...directory.errors);
       const totals = Object.fromEntries(['checked', 'resolved', 'retrying', 'attention']
         .map(key => [key, result.diaries.reduce((sum, diary) => sum + diary.result[key], 0)]));
-      return { ...totals, ...result };
+      return { ...totals, ...result, directory };
     },
     daily: async () => {
       const result = await each(async app => ({ days_checked: (await app.daily()).length }));

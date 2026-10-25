@@ -35,8 +35,9 @@ npm ci
 npm test
 mkdir -p data credentials tokens
 cp -n .env.example .env
+cp -n users.example.json users.json
 chmod 700 data credentials tokens
-chmod 600 .env
+chmod 600 .env users.json
 ```
 
 Reuse the account if it already exists. Clone only into an empty directory; use the update procedure below for an existing installation.
@@ -48,7 +49,7 @@ Follow [account setup](setup.md) and fill in the server's `.env`. **The server d
 - `credentials/google-oauth-client.json`
 - `tokens/google-token.json`
 
-Also put the two Google IDs printed by the helper into the server's `.env`. The saved refresh token lets the bot access Google unattended, including after a reboot.
+Also put the Google root folder ID printed by the helper into the server's `.env`, and configure the diary users in `users.json`. The saved refresh token lets the bot access Google unattended, including after a reboot.
 
 If the dedicated account accepts SSH, run this from the computer where you completed OAuth, replacing `your-server` with your own host:
 
@@ -82,9 +83,9 @@ pm2 status
 pm2 logs health-diary-bot --lines 50
 ```
 
-Run the privileged command printed by `pm2 startup` from an administrator shell. It should target the `health-diary` user. PM2 creates its own boot service; no separate bot service is needed. Send a test voice note and check `/status` before proceeding.
+Run the privileged command printed by `pm2 startup` from an administrator shell. It should target the `health-diary` user. PM2 creates its own boot service; no separate bot service is needed. Send a test voice note and check `/admin` → person → **Status** before proceeding.
 
-PM2 watches `src/`, including the AI prompts, and waits two seconds before restarting after a change. Changes to `.env`, dependencies or the PM2 configuration require an explicit restart. For updates involving multiple files or dependencies, follow the procedure below to finish the update and apply the ecosystem settings before restarting.
+PM2 watches `src/`, including the AI prompts, and waits two seconds before restarting after a change. Changes to `.env`, `users.json`, dependencies or the PM2 configuration require an explicit restart. For updates involving multiple files or dependencies, follow the procedure below to finish the update and apply the ecosystem settings before restarting.
 
 ## 4. Enable the scheduled jobs
 
@@ -114,13 +115,13 @@ systemctl list-timers 'health-diary-*'
 
 The services run as `health-diary`, load the same `.env` as the bot, and can write only to `data/` and `tokens/`. All three timers catch up after downtime; application date checks prevent stale reminders and regenerated summaries.
 
-Confirm `/status`, timer logs and PM2 startup after a reboot. See [troubleshooting](operations.md) if processing remains incomplete.
+Confirm `/admin` → person → **Status**, timer logs and PM2 startup after a reboot. See [troubleshooting](operations.md) if processing remains incomplete.
 
 ## Updating an installation
 
 Cron installations should use [the cron update procedure](cron.md#updating-an-installation). The commands below apply to systemd timers.
 
-Preserve `data/`, `.env`, `credentials/` and `tokens/`. Do not replace the entire project directory or copy another installation's runtime files over it.
+Preserve `data/`, `.env`, `users.json`, `credentials/` and `tokens/`. Do not replace the entire project directory or copy another installation's runtime files over it.
 
 First stop scheduling and active jobs, then stop the bot with file watching disabled. From an administrator shell:
 

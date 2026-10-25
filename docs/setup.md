@@ -9,7 +9,7 @@ Complete the installation commands in the README first. Edit `.env` in a text ed
 **For a new bot, no webhook setup is needed.** If you're reusing a bot previously connected to another application, read [reusing an existing Telegram bot](operations.md#reusing-an-existing-telegram-bot) before continuing.
 
 1. Open [BotFather](https://t.me/BotFather) in Telegram, send `/newbot`, and follow the prompts. Put the resulting token in `TELEGRAM_BOT_TOKEN`.
-2. Have both the diary user and administrator open the new bot and press **Start**. These must be two distinct accounts.
+2. Have each diary user and the administrator open the new bot and press **Start**. The administrator can also be a diary user.
 3. Before starting the application, run the following command from the repository directory to find their numeric IDs. It prints private-chat names and IDs, without printing message content or advancing the update offset.
 
 ```bash
@@ -40,10 +40,10 @@ Fill in these values in `.env`:
 | Setting | Value |
 | --- | --- |
 | `TELEGRAM_BOT_TOKEN` | Token from BotFather. |
-| `TELEGRAM_DIARY_USER_ID` | Numeric ID of the diary user. |
 | `TELEGRAM_ADMIN_USER_ID` | Numeric ID of the administrator. |
+| `DIARY_USERS_FILE` | `users.json`, the private diary-user registry. |
 
-When updating an existing installation, set `TELEGRAM_DIARY_USER_ID` in `.env` to the diary user's existing numeric ID before restarting the bot.
+Copy `users.example.json` to `users.json` and replace its examples with the allowed users' numeric IDs and labels. Include the administrator there if they should record their own diary. Labels can change; IDs identify the records permanently.
 
 If no users appear, send `/start` to the bot again and rerun the command. Do not run it alongside an active bot. You can also disable joining groups through BotFather's `/setjoingroups`; the application already ignores group messages.
 
@@ -65,9 +65,9 @@ Use the Google account that should own the diary archive. Complete these steps o
 6. In **Audience → Publishing status**, click **Publish app → Confirm**. Check the status is **In production before authorising below**: refresh tokens issued in **Testing expire after seven days** for this app. See [Google's publishing-status guidance](https://support.google.com/cloud/answer/15549945).
 7. In **Clients**, create an OAuth client with application type **Desktop app**. Download its JSON and save it as `credentials/google-oauth-client.json`.
 8. Run `npm run google-auth`. Open its printed URL in a browser on the same computer, sign in with the archive owner's Google account, and approve access.
-9. Copy the printed `GOOGLE_DRIVE_ROOT_FOLDER_ID` and `GOOGLE_SHEET_ID` into `.env`.
+9. Copy the printed `GOOGLE_DRIVE_ROOT_FOLDER_ID` into `.env`.
 
-The helper saves a refresh token in `tokens/google-token.json` and creates a private **Health Diary** folder containing a **Diary Index** Sheet. Use these generated resources: the `drive.file` permission limits access to files created or authorised through this app.
+The helper saves a refresh token in `tokens/google-token.json` and creates a private **Health Diary** root. Each diary gets an ID-named folder and a separate **Diary Index** Sheet as needed. One Google authorization serves the installation; diary users do not authorize separate Drive accounts. Use the generated resources: the `drive.file` permission limits access to files created or authorised through this app.
 
 **Already authorised in Testing?** After publishing, rerun `npm run google-auth` to obtain a token issued in Production. Keep the same OAuth client and existing archive IDs in `.env`, then transfer the updated `tokens/google-token.json` to the server. If the bot and jobs are running, stop them before replacing the token and restart them afterwards.
 
@@ -76,7 +76,7 @@ The helper saves a refresh token in `tokens/google-token.json` and creates a pri
 The Debian server does not need a browser or desktop environment. After completing Google sign-in on your computer:
 
 1. Transfer `credentials/google-oauth-client.json` and `tokens/google-token.json` using the [secure transfer commands](deployment.md#2-configure-the-server).
-2. Put the helper's printed `GOOGLE_DRIVE_ROOT_FOLDER_ID` and `GOOGLE_SHEET_ID` in the **server's** `.env`.
+2. Put the helper's printed `GOOGLE_DRIVE_ROOT_FOLDER_ID` in the **server's** `.env`, and configure `users.json` on the server.
 3. Start the bot on the server. It refreshes Google access automatically using the saved token; no browser is needed for normal operation or restarts.
 
 There is no need to start the bot immediately after switching to Production. Production refresh tokens have no fixed seven-day expiry, but can still stop working, for example after access is revoked or the token goes unused for six months. See [Google's token-expiration rules](https://developers.google.com/identity/protocols/oauth2#expiration).
@@ -88,13 +88,13 @@ Run `npm start`. Send one short voice note from the diary account and check that
 - Telegram replies with the summary.
 - Drive contains the audio, transcript, summary and metadata.
 - The Sheet's `Entries` tab contains one row with the same summary.
-- The administrator's `/status` reports no outstanding problems.
+- The administrator's `/admin` → person → **Status** reports no outstanding problems.
 
 Then follow [server deployment](deployment.md) to install the scheduled jobs. A foreground `npm start` by itself does not install a scheduler.
 
 ## Optional configuration
 
-The complete list is in [`.env.example`](../.env.example). Defaults work for the intended single-user setup.
+The complete list is in [`.env.example`](../.env.example). Each enabled diary has separate records, processing state and schedules.
 
 | Setting | Default / behaviour |
 | --- | --- |
@@ -102,7 +102,7 @@ The complete list is in [`.env.example`](../.env.example). Defaults work for the
 | `ENTRY_SUMMARY_MODEL`, `DAILY_SUMMARY_MODEL` | `gpt-4.1-mini` |
 | `TIMEZONE` | `Europe/London`; other zones are not supported in v1. |
 | `DATA_DIR` | `data`, relative to the working directory. |
-| `DIARY_START_DATE` | Blank uses the first application run. Set an ISO date before first use to choose where daily catch-up starts. |
+| `DIARY_USERS_FILE` | `users.json`; each diary starts when first enabled. |
 | `RETAIN_LOCAL_AUDIO` | `true`. With `false`, audio is removed only after transcription and verified Drive archival. |
 | `GOOGLE_CREDENTIALS_FILE` | `credentials/google-oauth-client.json` |
 | `GOOGLE_TOKEN_FILE` | `tokens/google-token.json` |
@@ -110,4 +110,4 @@ The complete list is in [`.env.example`](../.env.example). Defaults work for the
 | `RETRY_INTERVAL_MS`, `ATTENTION_AFTER_MS` | Retry after 15 minutes; escalate persistent failure after one hour. |
 | `HTTP_TIMEOUT_MS` | 120,000 ms. |
 
-Restart the bot after editing `.env`. Scheduled jobs read the file on each invocation.
+Restart the bot after editing `.env` or `users.json`. Scheduled jobs read them on each invocation. Label changes reach Drive on the next retry pass, or immediately with `npm run sync-users`; diary folders retain their IDs.

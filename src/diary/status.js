@@ -35,6 +35,18 @@ export async function statusIndex(ctx) {
   }
   const state = await ctx.store.readState();
   const polling = await ctx.store.readPollingState();
+  if (ctx.config.directoryStateFile) {
+    try {
+      const directory = await readJson(ctx.config.directoryStateFile, null);
+      for (const error of directory?.errors || []) {
+        if (error.telegram_user_id && error.telegram_user_id !== ctx.config.diaryUserId) continue;
+        operations.push({ id: 'directory', operation: 'drive_owner_labels', status: 'retry', attempts: 0, last_error: error });
+      }
+    } catch {
+      operations.push({ id: 'directory', operation: 'drive_owner_labels', status: 'attention', attempts: 0,
+        last_error: { code: 'LOCAL_SOURCE_INVALID', message: 'Directory synchronization state needs repair.' } });
+    }
+  }
   const knownDates = new Set([...days.map(day => day.date), ...issues.filter(issue => issue.operation === 'invalid_day_metadata').map(issue => issue.date)]);
   for (let date = state.start_date; date <= finalisationCutoff(ctx.now()); date = addDays(date, 1)) {
     if (!knownDates.has(date)) operations.push({ id: date, operation: 'daily_summary', status: 'pending', attempts: 0,
@@ -43,7 +55,7 @@ export async function statusIndex(ctx) {
   if (polling.steps?.telegram_poll) add('bot', 'telegram_poll', polling.steps.telegram_poll);
   for (const [id, incident] of Object.entries(state.notifications || {})) {
     if (incident.delivery_uncertain || incident.notification_error) operations.push({ id, operation: 'admin_notification',
-      status: 'attention', attempts: 1, last_error: { code: 'ALERT_DELIVERY_UNCONFIRMED', message: 'Admin notification delivery unconfirmed; inspect the private chat and data/state.json' } });
+      status: 'attention', attempts: 1, last_error: { code: 'ALERT_DELIVERY_UNCONFIRMED', message: 'Admin notification delivery unconfirmed; inspect the private chat and saved alert state' } });
   }
   const today = entries.filter(entry => entry.date === localDate(ctx.now()));
   return { schema_version: 1, generated_at: localTimestamp(ctx.now()),
