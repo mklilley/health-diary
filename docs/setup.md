@@ -51,7 +51,9 @@ If no users appear, send `/start` to the bot again and rerun the command. Do not
 
 Create an API key in your [OpenAI API account](https://platform.openai.com/api-keys), enable API billing, and put the key in `OPENAI_API_KEY`. A ChatGPT subscription does not supply API access for this bot.
 
-The example configuration selects `gpt-4o-transcribe` for transcription and `gpt-4.1-mini` for summaries. Confirm your API project can use those models, or change the model settings in `.env`.
+The example configuration selects `gpt-transcribe` for transcription and `gpt-4.1-mini` for summaries. Confirm your API project can use those models, or change the model settings in `.env`.
+
+For an existing installation, update the model settings in the server's `.env` and restart the bot. Pulling code updates does not change that private file. New recordings use the configured transcription model; pending recordings keep the model saved when they were received.
 
 ## 3. Google Drive and Sheets
 
@@ -98,7 +100,7 @@ The complete list is in [`.env.example`](../.env.example). Each enabled diary ha
 
 | Setting | Default / behaviour |
 | --- | --- |
-| `TRANSCRIPTION_MODEL` | `gpt-4o-transcribe` |
+| `TRANSCRIPTION_MODEL` | `gpt-transcribe` |
 | `ENTRY_SUMMARY_MODEL`, `DAILY_SUMMARY_MODEL` | `gpt-4.1-mini` |
 | `TIMEZONE` | `Europe/London`; other zones are not supported in v1. |
 | `DATA_DIR` | `data`, relative to the working directory. |

@@ -93,7 +93,7 @@ export function loadConfig({ requireSecrets = true, env = process.env, cwd = pro
     diaryUsersFile, diaryUsers,
     telegramBotToken: required('TELEGRAM_BOT_TOKEN'),
     openaiApiKey: required('OPENAI_API_KEY'),
-    transcriptionModel: value('TRANSCRIPTION_MODEL', 'gpt-4o-transcribe'),
+    transcriptionModel: value('TRANSCRIPTION_MODEL', 'gpt-transcribe'),
     entrySummaryModel: value('ENTRY_SUMMARY_MODEL', 'gpt-4.1-mini'),
     dailySummaryModel: value('DAILY_SUMMARY_MODEL', 'gpt-4.1-mini'),
     googleDriveRootFolderId: required('GOOGLE_DRIVE_ROOT_FOLDER_ID'),
