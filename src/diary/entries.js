@@ -5,7 +5,7 @@ import { atomicWrite, exists } from '../util/atomic-write.js';
 import { entryIdentity } from '../util/dates.js';
 import { makeSteps, entrySteps } from './metadata.js';
 import { version as entryPromptVersion } from '../prompts/entry-summary-v1.js';
-import { version as transcriptionPromptVersion, transcriptionOptions } from '../prompts/transcription-v1.js';
+import { getTranscriptionSettings } from '../prompts/transcription-v2.js';
 
 export async function receiveVoice(ctx, message) {
   const { config, store } = ctx;
@@ -17,13 +17,14 @@ export async function receiveVoice(ctx, message) {
   if (old) return old;
   const { entryId, receivedAt, date } = entryIdentity(message);
   if (issues.some(issue => issue.id === entryId)) throw new Error('Entry metadata needs repair before redelivery');
+  const transcription = getTranscriptionSettings(config.transcriptionModel);
   const metadata = {
     schema_version: 1, entry_id: entryId, date,
     telegram_user_id: message.from.id, telegram_chat_id: message.chat.id,
     telegram_message_id: message.message_id, telegram_file_id: message.voice.file_id,
     received_at: receivedAt, ingested_at: ctx.now().toISOString(),
-    transcription_model: config.transcriptionModel, transcription_prompt_version: transcriptionPromptVersion,
-    transcription_configuration: { ...transcriptionOptions, original_format: 'ogg/opus', language: 'auto', prompt: null },
+    transcription_model: config.transcriptionModel, transcription_prompt_version: transcription.version,
+    transcription_configuration: { original_format: 'ogg/opus', language: 'auto', prompt: null, ...transcription.options },
     entry_summary_model: config.entrySummaryModel, entry_summary_prompt_version: entryPromptVersion,
     steps: makeSteps(entrySteps),
     attention: { required: false, alert_sent: false, resolved_alert_sent: false },
@@ -68,7 +69,9 @@ export async function processEntry(ctx, entry, { force = false } = {}) {
   if (done('telegram_audio_download')) {
     await run('transcription', async () => {
       if (!await exists(transcriptPath)) {
-        const transcript = await services.openai.transcribe(audioPath, { model: entry.transcription_model });
+        const transcript = await services.openai.transcribe(audioPath, {
+          model: entry.transcription_model, configuration: entry.transcription_configuration,
+        });
         if (typeof transcript !== 'string' || !transcript.trim()) throw Object.assign(new Error('Empty transcription'), { status: 422 });
         await atomicWrite(transcriptPath, transcript);
       }

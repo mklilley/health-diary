@@ -4,6 +4,7 @@ import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
+import OpenAI from 'openai';
 import { atomicWriteJson, readJson } from '../src/util/atomic-write.js';
 import { createTelegramService } from '../src/services/telegram.js';
 import { createOpenAIService } from '../src/services/openai.js';
@@ -16,6 +17,7 @@ import { loadGoogleAuth, makeGoogleAuth } from '../src/services/google-auth.js';
 import { validOAuthState, provisionGoogleArchive } from '../src/jobs/google-auth.js';
 import { prompt as entryPrompt, version as entryVersion } from '../src/prompts/entry-summary-v1.js';
 import { prompt as dayPrompt, version as dayVersion } from '../src/prompts/daily-summary-v1.js';
+import { prompt as transcriptionPrompt } from '../src/prompts/transcription-v2.js';
 
 const config = { httpTimeoutMs: 1000, telegramBotToken: 'not-a-real-token', googleSheetId: 'sheet-test', transcriptionModel: 'audio-model', entrySummaryModel: 'entry-model', dailySummaryModel: 'day-model' };
 async function fileFixture(t, bytes = Buffer.from('OggS synthetic fixture')) {
@@ -147,6 +149,7 @@ test('OpenAI uploads OGG unchanged and uses configured versions and full ordered
       assert.equal(request.model, 'audio-model');
       assert.equal(request.response_format, 'json');
       assert.equal(request.prompt, undefined);
+      assert.equal(request.keywords, undefined);
       return { text: 'Source fixture.' };
     } } },
     responses: { create: async (request) => { requests.push(request); return { status: 'completed', output_text: 'Summary fixture.' }; } },
@@ -164,6 +167,50 @@ test('OpenAI uploads OGG unchanged and uses configured versions and full ordered
   const dayInput = JSON.parse(requests[1].input);
   assert.deepEqual(dayInput.transcripts.map((entry) => entry.entry_id), ['earlier', 'later']);
   assert.equal(dayInput.transcripts[1].transcript, 'Full later source, not entry summary.');
+});
+
+test('OpenAI SDK sends vocabulary hints as multipart fields and honors saved transcription settings', async t => {
+  const fixture = await fileFixture(t);
+  const requests = [];
+  const transcript = 'I ate Quorn with a Q, then corn with a C.';
+  const client = new OpenAI({ apiKey: 'test-only', maxRetries: 0, fetch: async (url, options) => {
+    if (url === 'data:,') return new Response('');
+    assert.equal(new URL(url).pathname, '/v1/audio/transcriptions');
+    const form = await new Request(url, { ...options, duplex: 'half' }).formData();
+    requests.push(form);
+    assert.equal(form.get('file').name, 'audio.ogg');
+    assert.deepEqual(Buffer.from(await form.get('file').arrayBuffer()), fixture.bytes);
+    assert.equal(form.get('response_format'), 'json');
+    assert.equal(form.has('original_format'), false);
+    assert.equal(form.has('language'), false);
+    return new Response(JSON.stringify({ text: transcript, languages: [{ code: 'en' }] }), {
+      headers: { 'content-type': 'application/json' },
+    });
+  } });
+  const openai = createOpenAIService({ ...config, transcriptionModel: 'gpt-transcribe' }, { client });
+  assert.equal(await openai.transcribe(fixture.path), transcript);
+  assert.equal(requests[0].get('model'), 'gpt-transcribe');
+  assert.equal(requests[0].get('prompt'), transcriptionPrompt);
+  assert.deepEqual(requests[0].getAll('keywords[]'), ['Quorn', 'corn']);
+
+  await openai.transcribe(fixture.path, { model: 'gpt-4o-transcribe' });
+  assert.equal(requests[1].get('model'), 'gpt-4o-transcribe');
+  assert.equal(requests[1].has('prompt'), false);
+  assert.equal(requests[1].has('keywords[]'), false);
+
+  // Entries received before vocabulary hints retain their original unprompted request.
+  await openai.transcribe(fixture.path, { configuration: {
+    response_format: 'json', original_format: 'ogg/opus', language: 'auto', prompt: null,
+  } });
+  assert.equal(requests[2].get('model'), 'gpt-transcribe');
+  assert.equal(requests[2].has('prompt'), false);
+  assert.equal(requests[2].has('keywords[]'), false);
+
+  await openai.transcribe(fixture.path, { configuration: {
+    response_format: 'json', prompt: 'Previously saved food vocabulary.', keywords: ['Quorn'],
+  } });
+  assert.equal(requests[3].get('prompt'), 'Previously saved food vocabulary.');
+  assert.deepEqual(requests[3].getAll('keywords[]'), ['Quorn']);
 });
 
 test('OpenAI rejects incomplete, refused and empty summaries', async () => {

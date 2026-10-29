@@ -6,6 +6,7 @@ import { basename, dirname, join } from 'node:path';
 import { createDiary } from '../src/diary/index.js';
 import { atomicWrite, atomicWriteJson, exists } from '../src/util/atomic-write.js';
 import { handleUpdate } from '../src/bot/handlers.js';
+import { prompt as transcriptionPrompt } from '../src/prompts/transcription-v2.js';
 
 // Synthetic source strings deliberately contain no real diary/health material.
 const AUDIO = Buffer.from('OggS-synthetic-test-audio');
@@ -111,6 +112,28 @@ test('normal diary user voice preserves primary files and reuses one exact summa
   assert.equal(f.files.get(`${meta.drive_folder_id}/transcript.md`).content, transcript);
   assert.equal(f.files.get(`${meta.drive_folder_id}/audio.ogg`).content, AUDIO.toString());
   assert.ok(f.files.has(`${meta.drive_folder_id}/metadata.json`));
+});
+
+test('vocabulary hints are saved with the receipt and reused after a failed transcription and restart', async t => {
+  const f = await fixture(t);
+  f.config.transcriptionModel = 'gpt-transcribe';
+  f.fault('transcribe');
+  const receipt = await handleUpdate({ message: f.voice() }, f);
+  const meta = await f.entry(receipt);
+  assert.equal(meta.transcription_prompt_version, '2');
+  assert.equal(meta.transcription_configuration.prompt, transcriptionPrompt);
+  assert.deepEqual(meta.transcription_configuration.keywords, ['Quorn', 'corn']);
+  assert.equal(meta.steps.transcription.status, 'retry');
+
+  f.faults.clear();
+  f.config.transcriptionModel = 'different-current-model';
+  const restarted = await createDiary(f.options);
+  await restarted.retry({ force: true });
+  assert.equal((await f.entry(receipt)).steps.transcription.status, 'complete');
+  for (const call of f.calls.filter(call => call.operation === 'transcribe')) {
+    assert.equal(call.args.options.model, 'gpt-transcribe');
+    assert.deepEqual(call.args.options.configuration, meta.transcription_configuration);
+  }
 });
 
 test('duplicate Telegram delivery creates one entry, one row and one set of Drive objects', async (t) => {
