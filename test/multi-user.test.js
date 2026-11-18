@@ -9,7 +9,7 @@ import { createDiary } from '../src/diary/index.js';
 import { createDiaryArchive } from '../src/services/diary-archive.js';
 import { handleUpdate } from '../src/bot/handlers.js';
 import { runBot } from '../src/bot/bot.js';
-import { atomicWriteJson, readJson, exists } from '../src/util/atomic-write.js';
+import { atomicWrite, atomicWriteJson, readJson, exists } from '../src/util/atomic-write.js';
 import { withLock } from '../src/util/lock.js';
 
 // Every provider and all diary content in this file are synthetic.
@@ -236,6 +236,247 @@ test('changing the personal rule affects new receipts only, including failed tra
   f.config.diaryUsers = f.config.diaryUsers.map(user => ({ ...user, transcriptionCorrections: ['corn-quorn-v1'] }));
   await (await createMultiDiary(f.options)).processEntry(old.entry_id, 202);
   assert.equal(await readFile(f.userPath(202, 'entries', old.date, old.entry_id, 'transcript.md'), 'utf8'), raw);
+});
+
+test('historical transcript repair updates only matched sources, affected days, Sheets and existing exports for the selected owner', async t => {
+  const f = await fixture(t);
+  const raw = 'Corn pieces, corn with a Q, corn flakes and corn on the cob. Also corn with a C.';
+  const corrected = 'Quorn pieces, Quorn, corn flakes and corn on the cob. Also corn.';
+  f.services.openai.transcribe = async () => raw;
+  const alex = await handleUpdate({ message: f.voice(101) }, f);
+  const first = await handleUpdate({ message: f.voice(202) }, f);
+  const second = await handleUpdate({ message: f.voice(202, 2) }, f);
+  f.services.openai.transcribe = async () => 'Corn flakes, pop corn, sweet corn and corn cakes.';
+  const allowed = await handleUpdate({ message: f.voice(202, 3) }, f);
+  const allowedPath = f.userPath(202, 'entries', allowed.date, allowed.entry_id, 'metadata.json');
+  const allowedMetadata = await readFile(allowedPath);
+  f.setNow('2026-09-10T12:00:00Z');
+  await f.app.recordPoll();
+  await f.app.daily();
+  await handleUpdate({ message: f.voice(202, 4) }, f);
+  f.setNow('2026-09-11T12:00:00Z');
+  await f.app.recordPoll();
+  await f.app.daily();
+  const otherDay = await readFile(f.userPath(202, 'days', '2026-09-10', 'metadata.json'));
+  const otherEntry = await readFile(f.userPath(101, 'entries', alex.date, alex.entry_id, 'metadata.json'));
+  const otherDaySummary = await readFile(f.userPath(101, 'days', alex.date, 'summary.md'));
+  const oldMeta = await readJson(f.userPath(202, 'entries', first.date, first.entry_id, 'metadata.json'));
+  const oldDay = await readJson(f.userPath(202, 'days', first.date, 'metadata.json'));
+  f.config.diaryUsers[1].transcriptionCorrections = ['corn-quorn-v1'];
+  const app = await createMultiDiary(f.options);
+  const sam = await app.forUser(202);
+  f.services.openai.transcribe = async () => 'I ate corn with a C.';
+  const explicit = await handleUpdate({ message: f.voice(202, 5) }, { ...f, app });
+  const explicitPath = f.userPath(202, 'entries', explicit.date, explicit.entry_id, 'transcript.md');
+  assert.equal(await readFile(explicitPath, 'utf8'), 'I ate corn.');
+  const exported = await sam.exportAggregates();
+  const originalRemote = new Map([...f.files].map(([key, file]) => [key, { ...file }]));
+  const put = f.services.drive.putFile;
+  f.services.drive.putFile = async options => {
+    const previous = f.files.get(`${options.parentId}/${options.name}`);
+    if (previous && previous.content !== await readFile(options.path, 'utf8')) assert.equal(options.mutable, true, 'only explicit repairs may replace archived sources');
+    return put(options);
+  };
+  const dayCalls = f.summaries.length;
+  const acknowledgements = f.sent.filter(message => message.text.startsWith('Recorded')).length;
+  f.services.openai.transcribe = async () => assert.fail('Repair must reuse saved transcripts, not transcribe the audio again');
+  const preview = await sam.previewTranscriptRepair();
+  assert.equal(preview.status, 'ready');
+  assert.deepEqual(preview.entries.map(entry => entry.entry_id), [first.entry_id, second.entry_id]);
+  assert.equal(preview.day_count, 1);
+  assert.equal(preview.refresh_exports, true);
+  assert.deepEqual(f.files, originalRemote, 'preview does not touch Drive');
+  assert.equal(await readFile(f.userPath(202, 'entries', first.date, first.entry_id, 'transcript.md'), 'utf8'), raw);
+  const result = await sam.repairTranscripts(preview.fingerprint);
+  assert.equal(result.status, 'complete');
+  assert.equal(f.summaries.length, dayCalls + 1, 'one regeneration per affected day, even with multiple corrected entries');
+  assert.deepEqual(f.summaries.at(-1).sources.map(source => source.transcript), [corrected, corrected, 'Corn flakes, pop corn, sweet corn and corn cakes.']);
+  const archive = await readJson(f.userPath(202, 'archive.json'));
+  const sheet = f.sheets.get(archive.spreadsheet_id);
+  for (const entry of [first, second]) {
+    const directory = f.userPath(202, 'entries', entry.date, entry.entry_id);
+    const meta = await readJson(join(directory, 'metadata.json'));
+    assert.equal(await readFile(join(directory, 'transcript.md'), 'utf8'), corrected);
+    assert.equal(await readFile(join(directory, 'summary.md'), 'utf8'), `Entry summary: ${corrected}`);
+    assert.equal(f.files.get(`${meta.drive_folder_id}/transcript.md`).content, corrected);
+    assert.equal(f.files.get(`${meta.drive_folder_id}/summary.md`).content, `Entry summary: ${corrected}`);
+    assert.equal(sheet.entries.get(entry.entry_id).summary, `Entry summary: ${corrected}`);
+    assert.equal(await readFile(join(result.backup_directory, 'entries', entry.entry_id, 'transcript.md'), 'utf8'), raw);
+    assert.equal(await readFile(join(directory, 'audio.ogg'), 'utf8'), `Synthetic source voice-202-${entry.telegram_message_id}.`);
+    assert.equal(meta.transcript_repairs.length, 1);
+  }
+  const meta = await readJson(f.userPath(202, 'entries', first.date, first.entry_id, 'metadata.json'));
+  for (const key of ['drive_audio', 'drive_transcript', 'drive_summary', 'drive_metadata']) assert.equal(meta.steps[key].drive_file_id, oldMeta.steps[key].drive_file_id);
+  assert.deepEqual(meta.transcription_configuration, oldMeta.transcription_configuration, 'original transcription provenance remains accurate');
+  const daily = await readFile(f.userPath(202, 'days', first.date, 'summary.md'), 'utf8');
+  assert.equal(f.files.get(`${oldDay.drive_folder_id}/summary.md`).content, daily);
+  assert.equal(sheet.days.get(first.date).summary, daily);
+  const newExport = await readJson(f.userPath(202, 'aggregates', 'metadata.json'));
+  for (const file of exported.uploads) {
+    const step = newExport.steps[file.name];
+    assert.ok(file.url.endsWith(`/${step.drive_file_id}/view`));
+    const remote = [...f.files.values()].find(item => item.id === step.drive_file_id);
+    assert.equal(remote.content, await readFile(f.userPath(202, 'aggregates', file.name), 'utf8'));
+    assert.match(remote.content, /Quorn pieces/);
+  }
+  assert.deepEqual(await readFile(allowedPath), allowedMetadata);
+  assert.deepEqual(await readFile(f.userPath(202, 'days', '2026-09-10', 'metadata.json')), otherDay);
+  assert.deepEqual(await readFile(f.userPath(101, 'entries', alex.date, alex.entry_id, 'metadata.json')), otherEntry);
+  assert.deepEqual(await readFile(f.userPath(101, 'days', alex.date, 'summary.md')), otherDaySummary);
+  for (const [key, file] of originalRemote) if (!key.startsWith(`${oldMeta.drive_folder_id}/`) && file.name === 'audio.ogg') assert.deepEqual(f.files.get(key), file);
+  assert.equal(f.sent.filter(message => message.text.startsWith('Recorded')).length, acknowledgements);
+  assert.equal((await sam.previewTranscriptRepair()).status, 'empty');
+  assert.equal(await readFile(explicitPath, 'utf8'), 'I ate corn.');
+  assert.equal((await (await app.forUser(101)).previewTranscriptRepair()).status, 'disabled');
+});
+
+test('repair resumes after summary, Drive and export failures without reapplying spelling rules or repeating saved AI work', async t => {
+  const f = await fixture(t);
+  f.services.openai.transcribe = async () => 'corn pieces and corn with a C.';
+  const entry = await handleUpdate({ message: f.voice(202) }, f);
+  await (await f.app.forUser(202)).exportAggregates();
+  f.config.diaryUsers[1].transcriptionCorrections = ['corn-quorn-v1'];
+  let sam = await (await createMultiDiary(f.options)).forUser(202);
+  const preview = await sam.previewTranscriptRepair();
+  let failSummary = true, failDrive = true, failExport = true, generated = 0;
+  f.services.openai.summarizeEntry = async text => {
+    if (failSummary) throw Object.assign(new Error('Fixture summary outage'), { status: 503 });
+    generated++;
+    return `Repaired: ${text}`;
+  };
+  const put = f.services.drive.putFile;
+  f.services.drive.putFile = async options => {
+    if ((failDrive && options.name === 'summary.md') || (failExport && options.name.startsWith('all-')))
+      throw Object.assign(new Error('Fixture Drive outage'), { status: 503 });
+    return put(options);
+  };
+  sam = await (await createMultiDiary(f.options)).forUser(202);
+  const result = await sam.repairTranscripts(preview.fingerprint);
+  assert.equal(result.status, 'pending');
+  assert.equal((await sam.deleteLastEntryToday({ entryId: entry.entry_id, date: entry.date })).status, 'repair_pending');
+  assert.equal((await sam.exportAggregates()).reason, 'transcript_repair_pending');
+  assert.match(await sam.status(), /transcript repair/);
+  const directory = f.userPath(202, 'entries', entry.date, entry.entry_id);
+  assert.equal(await readFile(join(directory, 'transcript.md'), 'utf8'), 'Quorn pieces and corn.');
+  failSummary = false;
+  f.config.diaryUsers[1].transcriptionCorrections = [];
+  sam = await (await createMultiDiary(f.options)).forUser(202);
+  await sam.retry({ force: true });
+  assert.equal(generated, 1);
+  assert.equal((await sam.previewTranscriptRepair()).status, 'pending');
+  failDrive = false;
+  await sam.retry({ force: true });
+  let job = await readJson(f.userPath(202, 'repairs', 'current.json'));
+  assert.equal(job.exports_prepared, true);
+  assert.equal(job.completed_at, undefined);
+  assert.equal(generated, 1);
+  const snapshot = await readFile(f.userPath(202, 'aggregates', 'all-transcripts.md'));
+  failExport = false;
+  sam = await (await createMultiDiary(f.options)).forUser(202);
+  await sam.retry({ force: true });
+  job = await readJson(f.userPath(202, 'repairs', 'current.json'));
+  assert.ok(job.completed_at);
+  assert.equal(generated, 1);
+  assert.deepEqual(await readFile(f.userPath(202, 'aggregates', 'all-transcripts.md')), snapshot, 'retry uploads the persisted export instead of rebuilding it');
+  assert.equal(await readFile(join(directory, 'transcript.md'), 'utf8'), 'Quorn pieces and corn.');
+  assert.equal(await readFile(join(result.backup_directory, 'entries', entry.entry_id, 'transcript.md'), 'utf8'), 'corn pieces and corn with a C.');
+});
+
+test('daily summary and Sheet failures resume the repair and delay export refresh; archived audio need not exist locally', async t => {
+  const f = await fixture(t);
+  f.config.retainLocalAudio = false;
+  f.services.openai.transcribe = async () => 'corn pieces';
+  let app = await createMultiDiary(f.options);
+  const entry = await handleUpdate({ message: f.voice(202) }, { ...f, app });
+  assert.equal(await exists(f.userPath(202, 'entries', entry.date, entry.entry_id, 'audio.ogg')), false);
+  f.setNow('2026-09-10T12:00:00Z');
+  await app.recordPoll();
+  await app.daily();
+  let sam = await app.forUser(202);
+  await sam.exportAggregates();
+  const originalExport = await readFile(f.userPath(202, 'aggregates', 'all-daily-summaries.md'));
+  const originalDay = await readFile(f.userPath(202, 'days', entry.date, 'summary.md'));
+  const summarize = f.services.openai.summarizeDay;
+  let failDay = true, failSheet = true, generated = 0;
+  f.services.openai.summarizeDay = async (...args) => {
+    if (failDay) throw Object.assign(new Error('Fixture daily summary outage'), { status: 503 });
+    generated++;
+    return summarize(...args);
+  };
+  const factory = f.services.forDiary;
+  f.services.forDiary = scoped => {
+    const service = factory(scoped);
+    return { ...service, sheets: { ...service.sheets, upsertDay: async row => {
+      if (scoped.diaryUserId === 202 && failSheet) throw Object.assign(new Error('Fixture Sheets outage'), { status: 503 });
+      return service.sheets.upsertDay(row);
+    } } };
+  };
+  f.config.diaryUsers[1].transcriptionCorrections = ['corn-quorn-v1'];
+  app = await createMultiDiary(f.options);
+  sam = await app.forUser(202);
+  const preview = await sam.previewTranscriptRepair();
+  const result = await sam.repairTranscripts(preview.fingerprint);
+  assert.equal(result.status, 'pending');
+  assert.deepEqual(await readFile(join(result.backup_directory, 'days', entry.date, 'summary.md')), originalDay);
+  assert.deepEqual(await readFile(f.userPath(202, 'aggregates', 'all-daily-summaries.md')), originalExport);
+  failDay = false;
+  await sam.retry({ force: true });
+  assert.equal(generated, 1);
+  assert.equal((await sam.previewTranscriptRepair()).status, 'pending');
+  assert.deepEqual(await readFile(f.userPath(202, 'aggregates', 'all-daily-summaries.md')), originalExport);
+  failSheet = false;
+  sam = await (await createMultiDiary(f.options)).forUser(202);
+  await sam.retry({ force: true });
+  assert.equal(generated, 1);
+  assert.ok((await readJson(f.userPath(202, 'repairs', 'current.json'))).completed_at);
+  assert.match(await readFile(f.userPath(202, 'aggregates', 'all-daily-summaries.md'), 'utf8'), /Quorn pieces/);
+  assert.equal(await exists(f.userPath(202, 'entries', entry.date, entry.entry_id, 'audio.ogg')), false);
+});
+
+test('interrupted local repair preparation is replayed before normal diary writes and never creates an unsolicited export', async t => {
+  const f = await fixture(t);
+  f.services.openai.transcribe = async () => 'corn pieces and corn with a C';
+  const entry = await handleUpdate({ message: f.voice(202) }, f);
+  const directory = f.userPath(202, 'entries', entry.date, entry.entry_id);
+  const originalMeta = await readJson(join(directory, 'metadata.json'));
+  f.config.diaryUsers[1].transcriptionCorrections = ['corn-quorn-v1'];
+  f.services.openai.summarizeEntry = async () => { throw Object.assign(new Error('Fixture outage'), { status: 503 }); };
+  let sam = await (await createMultiDiary(f.options)).forUser(202);
+  const preview = await sam.previewTranscriptRepair();
+  assert.equal(preview.day_count, 0);
+  assert.equal(preview.refresh_exports, false);
+  await sam.repairTranscripts(preview.fingerprint);
+  // Model a restart between replacing the transcript and saving entry metadata.
+  const jobPath = f.userPath(202, 'repairs', 'current.json');
+  const job = await readJson(jobPath);
+  job.steps.prepare.status = 'running';
+  await atomicWriteJson(jobPath, job);
+  await atomicWriteJson(join(directory, 'metadata.json'), originalMeta);
+  f.services.openai.summarizeEntry = async text => `Repaired ${text}`;
+  sam = await (await createMultiDiary(f.options)).forUser(202);
+  await sam.retry({ force: true });
+  assert.ok((await readJson(jobPath)).completed_at);
+  assert.equal(await readFile(join(directory, 'transcript.md'), 'utf8'), 'Quorn pieces and corn');
+  assert.equal((await readJson(join(directory, 'metadata.json'))).transcript_repairs.length, 1);
+  assert.equal(await exists(f.userPath(202, 'days', entry.date, 'summary.md')), false);
+  assert.ok(![...f.files.values()].some(file => file.name.startsWith('all-')));
+  assert.equal((await sam.previewTranscriptRepair()).status, 'empty');
+});
+
+test('repair confirmation rechecks changed sources and refuses unreadable metadata', async t => {
+  const f = await fixture(t);
+  f.services.openai.transcribe = async () => 'corn pieces';
+  const entry = await handleUpdate({ message: f.voice(202) }, f);
+  f.config.diaryUsers[1].transcriptionCorrections = ['corn-quorn-v1'];
+  const sam = await (await createMultiDiary(f.options)).forUser(202);
+  const preview = await sam.previewTranscriptRepair();
+  const directory = f.userPath(202, 'entries', entry.date, entry.entry_id);
+  await atomicWrite(join(directory, 'transcript.md'), 'corn pieces at lunchtime');
+  assert.equal((await sam.repairTranscripts(preview.fingerprint)).status, 'changed');
+  assert.equal(await exists(f.userPath(202, 'repairs')), false);
+  await atomicWrite(join(directory, 'metadata.json'), 'broken fixture');
+  assert.equal((await sam.previewTranscriptRepair()).status, 'unavailable');
+  assert.equal(await exists(f.userPath(202, 'repairs')), false);
 });
 
 test('bot backlog preserves both owners even when entry IDs collide and shares one durable cursor', async t => {

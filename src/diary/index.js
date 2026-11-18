@@ -11,6 +11,7 @@ import { finaliseDays, sendReminder } from './days.js';
 import { rebuildAggregates, retryAggregateUploads } from './aggregates.js';
 import { rebuildStatus, statusIndex, showDay, lastDay } from './status.js';
 import { lastEntryToday, deleteLastEntryToday, retryDeletions } from './deletions.js';
+import { prepareTranscriptRepair, previewTranscriptRepair, readTranscriptRepair, resumeTranscriptRepair, startTranscriptRepair } from './transcript-repairs.js';
 
 // Public operations share one writer lock across PM2, timers and manual jobs.
 // Helpers called inside a public operation deliberately do not acquire it again.
@@ -23,6 +24,7 @@ export async function createDiary({ config, services = {}, now = () => new Date(
   ctx.driveRoot = () => services.archive ? services.archive.rootFolder() : config.googleDriveRootFolderId;
   ctx.runner = createStepRunner(ctx);
   const locked = action => withLock(config.dataDir, action);
+  const writing = action => locked(async () => { await prepareTranscriptRepair(ctx); return action(); });
   await locked(() => store.init());
   async function flushAlerts() {
     const state = await store.readState();
@@ -34,8 +36,8 @@ export async function createDiary({ config, services = {}, now = () => new Date(
     await rebuildStatus(ctx);
   }
   return {
-    receiveVoice: message => locked(() => receiveVoice(ctx, message)),
-    processEntry: entryId => locked(async () => {
+    receiveVoice: message => writing(() => receiveVoice(ctx, message)),
+    processEntry: entryId => writing(async () => {
       const { entries, deletions } = await store.scan();
       if (deletions.some(entry => entry.entry_id === entryId)) return { entry_id: entryId, deleted: true };
       const entry = entries.find(entry => entry.entry_id === entryId);
@@ -44,7 +46,7 @@ export async function createDiary({ config, services = {}, now = () => new Date(
       await refresh();
       return result;
     }),
-    retry: ({ force = false } = {}) => locked(async () => {
+    retry: ({ force = false } = {}) => writing(async () => {
       const before = await statusIndex(ctx);
       await retryDeletions(ctx, { force });
       const { entries } = await store.scan();
@@ -53,7 +55,8 @@ export async function createDiary({ config, services = {}, now = () => new Date(
       if (state.steps) await ctx.runner.alerts(state, store.writeState);
       await finaliseDays(ctx, { force });
       await sendReminder(ctx);
-      await retryAggregateUploads(ctx, { force });
+      if (await readTranscriptRepair(ctx)) await resumeTranscriptRepair(ctx, { force });
+      else await retryAggregateUploads(ctx, { force });
       await refresh();
       const after = await statusIndex(ctx);
       const key = operation => `${operation.id}/${operation.operation}`;
@@ -61,11 +64,15 @@ export async function createDiary({ config, services = {}, now = () => new Date(
       return { checked: before.operations.length, resolved: before.operations.filter(op => !outstanding.has(key(op))).length,
         retrying: after.outstanding_retries, attention: after.needs_attention };
     }),
-    daily: () => locked(async () => { const result = await finaliseDays(ctx); await refresh(); return result; }),
-    reminder: () => locked(async () => { const result = await sendReminder(ctx); await flushAlerts(); await rebuildStatus(ctx); return result; }),
+    daily: () => writing(async () => { const result = await finaliseDays(ctx); await refresh(); return result; }),
+    reminder: () => writing(async () => { const result = await sendReminder(ctx); await flushAlerts(); await rebuildStatus(ctx); return result; }),
     status: () => locked(() => rebuildStatus(ctx)),
-    rebuildAggregates: () => locked(async () => { const result = await rebuildAggregates(ctx); await rebuildStatus(ctx); return result; }),
-    exportAggregates: () => locked(async () => {
+    rebuildAggregates: () => writing(async () => {
+      if (await readTranscriptRepair(ctx)) return { rebuilt: false, reason: 'transcript_repair_pending' };
+      const result = await rebuildAggregates(ctx); await rebuildStatus(ctx); return result;
+    }),
+    exportAggregates: () => writing(async () => {
+      if (await readTranscriptRepair(ctx)) return { rebuilt: false, reason: 'transcript_repair_pending' };
       const result = await rebuildAggregates(ctx, { upload: true, force: true });
       await rebuildStatus(ctx);
       return result;
@@ -73,7 +80,15 @@ export async function createDiary({ config, services = {}, now = () => new Date(
     showDay: date => locked(() => showDay(ctx, date)),
     lastDay: () => locked(() => lastDay(ctx)),
     lastEntryToday: () => locked(() => lastEntryToday(ctx)),
-    deleteLastEntryToday: target => locked(async () => {
+    previewTranscriptRepair: () => locked(() => previewTranscriptRepair(ctx)),
+    repairTranscripts: fingerprint => writing(async () => {
+      const result = await startTranscriptRepair(ctx, fingerprint);
+      await refresh();
+      return result;
+    }),
+    deleteLastEntryToday: target => writing(async () => {
+      const repair = await readTranscriptRepair(ctx);
+      if (repair?.entries.some(item => item.metadata.entry_id === target.entryId)) return { status: 'repair_pending' };
       const result = await deleteLastEntryToday(ctx, target);
       await refresh();
       return result;

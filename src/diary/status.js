@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { atomicWrite, atomicWriteJson, readJson } from '../util/atomic-write.js';
 import { addDays, localDate, localTimestamp, validateDate, finalisationCutoff } from '../util/dates.js';
 import { exportResult, validAggregateMetadata } from './aggregates.js';
+import { readTranscriptRepair } from './transcript-repairs.js';
 
 export async function statusIndex(ctx) {
   const { entries, days, issues, deletions } = await ctx.store.scan();
@@ -24,6 +25,13 @@ export async function statusIndex(ctx) {
   }
   for (const issue of issues) operations.push({ ...issue, status: 'attention', attempts: 0,
     last_error: { code: 'LOCAL_SOURCE_INVALID', message: 'Local source metadata or files need repair; existing files were preserved' } });
+  try {
+    const repair = await readTranscriptRepair(ctx);
+    if (repair) for (const [key, step] of Object.entries(repair.steps)) add('transcript repair', key, step);
+  } catch {
+    operations.push({ id: 'transcript repair', operation: 'metadata', status: 'attention', attempts: 0,
+      last_error: { code: 'LOCAL_SOURCE_INVALID', message: 'Transcript repair progress is unreadable; preserve the repair backups and restore its metadata' } });
+  }
   let aggregates;
   try {
     aggregates = await readJson(join(ctx.store.root, 'aggregates', 'metadata.json'), { schema_version: 1, steps: {} });

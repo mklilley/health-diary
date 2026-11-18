@@ -27,7 +27,7 @@ Select vocabulary profiles using `transcriptionCorrections` in each person's rec
 
 Omit the setting or use `[]` to use the general transcription prompt without vocabulary-specific hints or automatic text corrections. Profiles apply only to that person's newly received recordings. The `corn-quorn-v1` profile resolves “corn with a Q” and “Quorn with a Q” to **Quorn**, then changes other standalone “corn” to **Quorn**, except within these allowed phrases: **corn cakes**, **pop corn**, **corn flakes**, **sweetcorn**, **sweet corn**, and **corn on the cob**. Matching ignores case and accepts spaces or hyphens between words. An explicit **“with a C”** overrides the personal default and becomes **corn**. Whole words inside longer words, such as `popcorn`, are not replaced.
 
-Profile definitions, protected phrases and correction logic are in [vocabulary.js](../src/transcription/vocabulary.js). Additional word or phrase rules can be added there as named profiles and selected through the same setting. Unknown or duplicate profile names are rejected. Profiles run in the listed order, once, before the transcript is saved and before summaries or uploads. The recording stays unchanged. Each entry saves its prompt and profile IDs so pending work uses the same rules after a restart, even if the setting changes. Keep published profile versions stable when adding new ones. Existing transcripts and summaries are not rewritten. Pulling code updates does not update the private server registry.
+Profile definitions, protected phrases and correction logic are in [vocabulary.js](../src/transcription/vocabulary.js). Additional word or phrase rules can be added there as named profiles and selected through the same setting. Unknown or duplicate profile names are rejected. Profiles run in the listed order, once, before the transcript is saved and before summaries or uploads. The recording stays unchanged. Each entry saves its prompt and profile IDs so pending work uses the same rules after a restart, even if the setting changes. Keep published profile versions stable when adding new ones. Enabling a profile does not rewrite existing records automatically; use **Fix transcripts** below to repair them explicitly. Pulling code updates does not update the private server registry.
 
 ## Storage
 
@@ -41,15 +41,27 @@ Scheduled jobs visit each configured diary and report failures per person. A fai
 
 ## Using the admin menu in multi-user mode
 
-Open **admin** from Telegram's command menu, or send `/admin`. Tap a person's label and ID, then use **Today**, **Latest day**, **Choose date**, **Export**, **Status** or **Retry pending**. Choose date opens a calendar with month navigation; typing `YYYY-MM-DD` there also works. Every result identifies the diary, including each part of a long reply.
+Open **admin** from Telegram's command menu, or send `/admin`. Tap a person's label and ID, then use **Today**, **Latest day**, **Choose date**, **Export**, **Status**, **Retry pending** or **Fix transcripts**. Choose date opens a calendar with month navigation; typing `YYYY-MM-DD` there also works. Every result identifies the diary, including each part of a long reply.
 
 **Retry pending** tries unfinished processing, uploads and deletion cleanup for the selected diary immediately. Completed steps are skipped. Scheduled jobs also retry automatically.
 
 **Switch person** returns to the list. **Close** clears the admin selection; it does not delete records or disable voice recording. `/cancel` cancels an open deletion confirmation, or otherwise closes the admin controls. Voice notes always belong to the sender, even while viewing someone else's diary. Admins need an entry in `users.json` to record voice notes themselves.
 
-The existing `/today`, `/yesterday`, `/last`, `/day`, `/status`, `/retry` and `/export` shortcuts work for the selected diary only. Without a selection they open the person picker. Old buttons expire after navigating to a new menu. Restarting the bot clears the selection too; open `/admin` again. Ordinary users have no access to these controls.
+The `/today`, `/yesterday`, `/last`, `/day`, `/status`, `/retry`, `/export` and `/repair` shortcuts work for the selected diary only. `/repair` opens a preview; it never applies changes immediately. Without a selection they open the person picker. Old buttons expire after navigating to a new menu. Restarting the bot clears the selection too; open `/admin` again. Ordinary users have no access to these controls.
 
 The menu uses [Telegram inline keyboards](https://core.telegram.org/bots/api#inlinekeyboardmarkup). Buttons are acknowledged when received and checked against the current admin, diary and menu before any action. Their removal from old messages is best effort; stale buttons remain invalid even if Telegram could not remove them.
+
+## Repairing existing transcripts
+
+Enable the intended vocabulary profile for that person in the server's `users.json` and restart the bot. Open `/admin`, select the person, then **Fix transcripts**. Review the matching entries and tap **Apply corrections**. No PM2 or cron pause is needed.
+
+The scan checks saved transcripts against that person's enabled profiles. It shows the number of matching entries, affected saved daily summaries, and an example change for each of the first eight matches. Entries already processed with a profile are skipped: applying it twice could reinterpret a previously preserved “corn with a C”, which is saved as just “corn”. This is a vocabulary repair, not a general spelling checker or a new audio transcription.
+
+Confirmation corrects the matching local transcripts, regenerates their entry summaries and any saved daily summaries for those dates, then updates Drive and Sheets using the existing file IDs and rows. Daily summaries use all current transcripts for each affected date, including any late entries. Days without a saved summary keep their normal schedule. Existing aggregate exports are refreshed after the repaired records finish syncing; diaries with no export do not get one automatically. Original audio and previously sent Telegram messages stay unchanged. Other users' diaries are not scanned or changed.
+
+Original transcripts, summaries and metadata are backed up privately under `data/users/<ID>/repairs/<repair-ID>/`. Repair progress survives a restart. **Retry pending** or scheduled retries continue unfinished work, and **Status** reports outstanding operations. While a repair is pending, a new export and deletion of an affected entry wait until it finishes. New voice notes can still be received. If source records change between preview and confirmation, open a fresh preview before applying.
+
+This action finds entries whose **transcripts** need correction. It does not independently search summaries, import edits made on Drive, or fix unrelated recognition errors. A correctly spelled transcript with an independently incorrect summary will not be selected.
 
 ## Undoing today's latest entry
 

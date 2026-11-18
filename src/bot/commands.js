@@ -43,6 +43,7 @@ export async function commandReply(text, { role, app, now = () => new Date() }) 
     case 'export': {
       if (command.argument) return 'Use /export without arguments to export all saved diary text.';
       const result = await app.exportAggregates();
+      if (result.reason === 'transcript_repair_pending') return 'Transcript repair is still in progress. Use Retry pending or check Status before exporting.';
       if (!result.rebuilt) return 'Export could not be generated because some source files need attention. Existing exports were preserved. Use /status for details.';
       const { snapshot, uploads } = result;
       const lines = [result.uploaded ? 'Export ready.' : 'Export prepared; some uploads are still pending.', '',

@@ -33,6 +33,9 @@ function fixture() {
       calls.push(['forUser', id]);
       if (faults.has(id)) throw new Error('Private diary failure with secret content');
       return {
+        previewTranscriptRepair: async () => { calls.push(['repairPreview', id]); return { status: 'ready', fingerprint: `preview-${id}`,
+          entries: [{ received_at: '2026-09-08T12:00:00+01:00', before: 'I ate corn pieces.', after: 'I ate Quorn pieces.' }], day_count: 1, refresh_exports: true }; },
+        repairTranscripts: async fingerprint => { calls.push(['repair', id, fingerprint]); return { status: 'complete', entry_count: 1, day_count: 1, refreshed_exports: true }; },
         lastEntryToday: async () => { calls.push(['preview', id]); return latestEntries.get(id); },
         deleteLastEntryToday: async target => { calls.push(['delete', id, target]); return { status: 'complete' }; },
         showDay: async date => { calls.push(['day', id, date]); return `Saved day ${date} for ${id}`; },
@@ -94,6 +97,36 @@ test('admin chooses a named diary and every button uses that owner, including ex
   for (const message of f.sent) for (const button of message.options.replyMarkup?.inline_keyboard.flat() || []) {
     assert.ok(Buffer.byteLength(button.callback_data) <= 64);
   }
+});
+
+test('transcript repair previews a selected diary, confirms once, and rejects stale and foreign buttons', async () => {
+  const f = fixture();
+  await f.send('/repair');
+  assert.equal(f.calls.length, 0);
+  await f.tap('Sam (202)');
+  await f.tap('Fix transcripts');
+  assert.deepEqual(f.calls.at(-1), ['repairPreview', 202]);
+  assert.match(f.latest().text, /Before: I ate corn pieces/);
+  assert.match(f.latest().text, /After: I ate Quorn pieces/);
+  assert.match(f.latest().text, /aggregate exports will also be refreshed/);
+  const abandoned = f.callback('Apply corrections');
+  await f.tap('Back');
+  await handleUpdate({ callback_query: abandoned }, f.context);
+  assert.ok(!f.calls.some(call => call[0] === 'repair'));
+  await f.send('/repair');
+  const confirm = f.callback('Apply corrections');
+  await handleUpdate({ callback_query: { ...confirm, from: { id: 101 } } }, f.context);
+  assert.ok(!f.calls.some(call => call[0] === 'repair'));
+  await handleUpdate({ callback_query: confirm }, f.context);
+  assert.match(f.latest().text, /Repair complete/);
+  await handleUpdate({ callback_query: confirm }, f.context);
+  assert.deepEqual(f.calls.filter(call => call[0] === 'repair'), [['repair', 202, 'preview-202']]);
+  await f.send('/repair');
+  const stale = f.callback('Apply corrections');
+  await f.send('/admin');
+  await f.tap('Alex (101)');
+  await handleUpdate({ callback_query: stale }, f.context);
+  assert.equal(f.calls.filter(call => call[0] === 'repair').length, 1);
 });
 
 test('shortcuts require selection, name their target, and Close or cancel clears only admin selection', async () => {

@@ -7,6 +7,21 @@ import { log, safeError } from '../util/logging.js';
 
 const pageSize = 8;
 const diaryCommands = new Set(['today', 'yesterday', 'last', 'day', 'export', 'status', 'retry']);
+const repairReplies = {
+  disabled: 'No vocabulary corrections are enabled for this diary. Enable a vocabulary profile before checking existing transcripts.',
+  empty: 'No transcript corrections are needed. Entries already processed with the selected vocabulary profiles are skipped.',
+  unavailable: 'Some diary source files need attention. Check Status before repairing transcripts.',
+  pending: 'Transcript repair is in progress. Scheduled retries will continue it; use Retry pending to try again now, or Status for details.',
+  changed: 'The diary changed since the preview. Choose Fix transcripts again to review the current matches.',
+};
+
+function changePreview(before, after) {
+  let index = 0;
+  while (index < Math.min(before.length, after.length) && before[index] === after[index]) index++;
+  const start = Math.max(0, index - 35);
+  const excerpt = text => `${start ? '…' : ''}${text.slice(start, start + 120).replace(/\s+/g, ' ')}${text.length > start + 120 ? '…' : ''}`;
+  return `Before: ${excerpt(before)}\nAfter: ${excerpt(after)}`;
+}
 
 // Acknowledge on receipt, before voice processing or exports can delay the
 // interaction. Acknowledgement grants no access; dispatch checks again.
@@ -79,6 +94,7 @@ export function createAdminMenu({ app, config, services, now = () => new Date() 
       [button('Today', 'today'), button('Latest day', 'last')],
       [button('Choose date', 'date'), button('Export', 'export')],
       [button('Status', 'status'), button('Retry pending', 'retry')],
+      [button('Fix transcripts', 'repair')],
       [button('Switch person', 'switch'), button('Close', 'close')],
     ]);
     selectedId = user.telegramUserId;
@@ -96,6 +112,38 @@ export function createAdminMenu({ app, config, services, now = () => new Date() 
     selectedId = null;
     awaitingDate = false;
     await publish(`Admin menu closed. No diary is selected.\n\n${voiceHint()}`, null, button => [[button('Open admin menu', 'open')]]);
+  }
+
+  async function repair(user, fingerprint) {
+    awaitingDate = false;
+    await invalidate();
+    let result;
+    try {
+      const scoped = await app.forUser(user.telegramUserId);
+      if (fingerprint) {
+        await telegram.sendMessage(config.adminUserId, 'Correcting transcripts and regenerating affected summaries. Google updates may take a few minutes.', { prefix: header(user) });
+        result = await scoped.repairTranscripts(fingerprint);
+      } else result = await scoped.previewTranscriptRepair();
+    } catch (error) {
+      log('admin_transcript_repair_failed', { telegram_user_id: user.telegramUserId, ...safeError(error) });
+      return actions(user, 'The transcript repair could not be completed. Check Status, then use Retry pending to resume any saved work.');
+    }
+    if (result.status === 'ready') {
+      const examples = result.entries.slice(0, 8).map(entry => `${entry.received_at}\n${changePreview(entry.before, entry.after)}`);
+      const text = [`Found ${result.entries.length} entries to correct and ${result.day_count} saved daily summaries to regenerate.`, '',
+        'First change in each matching entry:', ...examples,
+        ...(result.entries.length > 8 ? [`Showing 8 of ${result.entries.length} matching entries.`] : []), '',
+        'Apply the selected vocabulary corrections to these saved transcripts and regenerate their entry summaries and affected daily summaries? Drive files and Sheets rows will be updated.',
+        result.refresh_exports ? 'Existing aggregate exports will also be refreshed.' : 'No aggregate export will be created.',
+        'Local backups will be kept. Original recordings stay unchanged. Only this diary is affected.',
+      ].join('\n\n');
+      await publish(text, user, button => [[button('Apply corrections', 'repair_confirm'), button('Back', 'back')]]);
+      menu.repairFingerprint = result.fingerprint;
+      return;
+    }
+    return actions(user, result.status === 'complete'
+      ? `Repair complete.\n\nEntries corrected: ${result.entry_count}\nDaily summaries regenerated: ${result.day_count}\nDrive and Sheets updated.${result.refreshed_exports ? '\nExisting exports refreshed.' : ''}\n\nOriginal text is backed up locally.`
+      : repairReplies[result.status] || repairReplies.pending);
   }
 
   async function run(text, user) {
@@ -134,6 +182,7 @@ export function createAdminMenu({ app, config, services, now = () => new Date() 
         return validateDate(date) ? run(`/day ${date}`, user) : dates(user, undefined, 'Please choose a day or send a valid date, for example 2026-09-15.');
       }
       if (command?.name === 'day' && !command.argument) return dates(user);
+      if (command?.name === 'repair' && !command.argument) return repair(user);
       if (diaryCommands.has(command?.name)) return run(message.text, user);
       return actions(user);
     },
@@ -158,6 +207,8 @@ export function createAdminMenu({ app, config, services, now = () => new Date() 
         case 'date': return dates(user);
         case 'month': return dates(user, argument);
         case 'day': return run(`/day ${argument}`, user);
+        case 'repair': return repair(user);
+        case 'repair_confirm': return repair(user, menu.repairFingerprint);
         default: return run(`/${action}`, user);
       }
     },

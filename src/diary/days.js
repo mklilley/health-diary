@@ -69,8 +69,8 @@ export async function processDay(ctx, day, { force = false } = {}) {
   if (summaryStep.status === 'complete') {
     await run('drive_summary', async step => {
       const result = await services.drive.putFile({ parentId: await folder(ctx, day), name: 'summary.md', path: summaryPath,
-        mimeType: 'text/markdown', fileId: step.drive_file_id });
-      return { drive_file_id: result.id };
+        mimeType: 'text/markdown', fileId: step.drive_file_id, mutable: Boolean(step.replacement_authorized) });
+      return { drive_file_id: result.id, ...(step.replacement_authorized ? { replacement_authorized: null } : {}) };
     });
     await run('sheet_day', async () => {
       const result = await services.sheets.upsertDay({ date: day.date, summary: await readFile(summaryPath, 'utf8'), entryCount: day.summary_entry_count ?? day.entry_count });

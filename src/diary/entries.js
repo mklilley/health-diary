@@ -117,8 +117,10 @@ export async function processEntry(ctx, entry, { force = false } = {}) {
     ['drive_summary', 'entry_summary', 'summary.md', 'text/markdown'],
   ]) {
     if (done(source)) await run(key, async step => {
-      const result = await services.drive.putFile({ parentId: await folder(ctx, entry), name, path: join(directory, name), mimeType, fileId: step.drive_file_id });
-      return { drive_file_id: result.id, web_view_link: result.webViewLink || `https://drive.google.com/file/d/${result.id}/view` };
+      const result = await services.drive.putFile({ parentId: await folder(ctx, entry), name, path: join(directory, name), mimeType,
+        fileId: step.drive_file_id, mutable: key !== 'drive_audio' && Boolean(step.replacement_authorized) });
+      return { drive_file_id: result.id, web_view_link: result.webViewLink || `https://drive.google.com/file/d/${result.id}/view`,
+        ...(step.replacement_authorized ? { replacement_authorized: null } : {}) };
     });
   }
   if (done('entry_summary') && done('drive_audio') && done('drive_transcript')) {

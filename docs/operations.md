@@ -47,11 +47,12 @@ sudo journalctl -u health-diary-daily.service -n 50 --no-pager
 | `data/users/<ID>/state.json` | Diary owner, start date and alert reservations |
 | `data/users/<ID>/archive.json` | Stable Drive folder and Sheet IDs |
 | `data/users/<ID>/deletions/<entry-id>.json` | Deletion progress and IDs preventing reprocessing; no recording or diary text |
+| `data/users/<ID>/repairs/` | Transcript repair progress and private backups of original text and metadata |
 | `data/polling.json` | Shared polling health and connection-alert reservations |
 | `data/directory.json` | Generated owner-label file IDs, hashes and sync errors |
 | `data/telegram.json` | Durable Telegram update offset |
 
-Drive archives each diary under its numeric user ID. The root `diary-users.txt` and per-folder `owner.txt` identify the owners. Individual entry and day folders update automatically; each diary's `aggregates` folder updates on an administrator's export request. Its Sheet has `Entries` and `Days` tabs. Labels are generated from `users.json`; edit that file and run `npm run sync-users` rather than editing the generated text files.
+Drive archives each diary under its numeric user ID. The root `diary-users.txt` and per-folder `owner.txt` identify the owners. Individual entry and day folders update automatically; each diary's `aggregates` folder updates on an administrator's export request or after a confirmed transcript repair refreshes an existing export. Its Sheet has `Entries` and `Days` tabs. Labels are generated from `users.json`; edit that file and run `npm run sync-users` rather than editing the generated text files.
 
 Audio and raw transcripts are primary records. Per-entry and per-day metadata control processing. Summaries are derived; status, Sheets and aggregates are views. Local audio stays by default. With `RETAIN_LOCAL_AUDIO=false`, it can be removed only after transcription and verified Drive archival.
 
@@ -64,6 +65,8 @@ Select the person through `/admin`, then tap **Export** or send `/export`. It co
 The reply and files show when the snapshot was generated, how much text was included, entries still processing (including pending uploads or acknowledgements), and due daily summaries not yet saved. An export uses what is already saved; it does not wait for unfinished processing or generate missing summaries. Request another export after that work finishes if you need it included.
 
 New entries, daily jobs, restarts and cron passes do not rebuild these files. If an export upload fails, scheduled retries upload that same saved snapshot. Check `/status` for progress and links, or use `/retry` for an immediate attempt. Aggregate files from an older installation remain unchanged until you request an export.
+
+**Fix transcripts** is an explicit repair action: after correcting sources and syncing regenerated summaries, it also refreshes any existing export. See [repairing existing transcripts](multi-user.md#repairing-existing-transcripts) for the preview, confirmation and recovery steps.
 
 ## Processing and recovery
 
@@ -85,7 +88,7 @@ Ordinary logs omit health content and secrets. Explicit day-view commands and so
 - Reminders send only between 22:00 and midnight on the current London date, after a recent successful poll. A previous day's missed reminder is not sent the next morning.
 - Daily summaries use all full transcripts in received order. Incomplete transcription or an undrained Telegram backlog delays finalisation.
 - Catch-up begins at the saved diary start date. Zero-entry days complete without an AI call.
-- Completed daily summaries stay unchanged. Corrections and retrospective comments belong to the new voice note's received date.
+- Completed daily summaries stay unchanged during routine processing. An administrator's confirmed transcript repair regenerates affected saved summaries. Corrections and retrospective comments recorded as new voice notes belong to the new note's received date.
 
 Telegram retains queued updates for no more than 24 hours, and its standard bot download API limits files to 20 MB. Notes that expire before receipt cannot be recovered locally; use shorter voice notes for oversized recordings. See the [Telegram API limits](https://core.telegram.org/bots/api).
 
@@ -127,7 +130,7 @@ Preserve attempts and every source/AI step. Save valid JSON atomically, then res
 
 ## Restoring a lost data directory
 
-Stop all writers. Restore each archived `entries/` and `days/` tree into its owner's `data/users/<ID>/`, preserving filenames. Restore the user registry, ownership state, archive bindings, each diary's `deletions/` records and shared Telegram state from a trusted backup, and credentials separately. Exclude entries listed in deletion records from restored source folders; reconcile any deletions made after the backup before reconnecting. Inspect metadata, Drive IDs, start dates and delivery reservations. Rebuild status, then retry. Use `/export` when you next need combined files.
+Stop all writers. Restore each archived `entries/` and `days/` tree into its owner's `data/users/<ID>/`, preserving filenames. Restore the user registry, ownership state, archive bindings, each diary's `deletions/` and `repairs/` records and shared Telegram state from a trusted backup, and credentials separately. Exclude entries listed in deletion records from restored source folders; reconcile any deletions made after the backup before reconnecting. Inspect metadata, Drive IDs, start dates and delivery reservations. Rebuild status, then retry. Use `/export` when you next need combined files.
 
 Remote metadata is a snapshot and may lag local delivery reservations. Review uncertain sends before resuming. There is no automated disaster-restore command, and Drive cannot recover files that never uploaded.
 

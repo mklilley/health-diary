@@ -63,11 +63,11 @@ Only approved users' **voice notes** create entries. Recordings always belong to
 
 With scheduled jobs installed, the bot checks for a no-entry reminder from **22:00** and summarises the previous day from **02:00**, London time. Processing or downtime can delay completion.
 
-Administrators can open **admin** from Telegram's command menu (or send `/admin`), choose a person, and use **Today**, **Latest day**, **Choose date**, **Export**, **Status** or **Retry pending**. **Switch person** changes the selection; **Close** clears it. [Menu and configuration details](docs/multi-user.md).
+Administrators can open **admin** from Telegram's command menu (or send `/admin`), choose a person, and use **Today**, **Latest day**, **Choose date**, **Export**, **Status**, **Retry pending** or **Fix transcripts**. **Switch person** changes the selection; **Close** clears it. [Menu and configuration details](docs/multi-user.md).
 
 **Latest day** skips empty days. It shows the completed daily summary when available, otherwise the saved entry summaries with processing still pending marked.
 
-Use **Export** when you need that person's saved transcripts and summaries together for analysis. It makes no AI calls. Combined files stay unchanged until the next export, including after deleting an entry; individual records and daily summaries continue to be saved automatically.
+Use **Export** when you need that person's saved transcripts and summaries together for analysis. It makes no AI calls. Combined files stay unchanged until the next export, including after deleting an entry. A confirmed **Fix transcripts** repair also refreshes existing exports after correcting sources and regenerating affected summaries. [Transcript repair details](docs/multi-user.md#repairing-existing-transcripts).
 
 ## Privacy and storage
 

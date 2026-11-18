@@ -10,6 +10,7 @@ const replies = {
   changed: 'You have recorded a newer entry. Choose Delete last entry again to review it.',
   unavailable: 'This diary needs attention before an entry can be deleted. Please contact the administrator.',
   pending: 'Deletion is queued. I will retry the unfinished cleanup and confirm when it is complete.',
+  repair_pending: 'This entry is being corrected. Please try deleting it again after the administrator’s repair finishes.',
 };
 
 export function createDeleteMenu({ app, config, services }) {

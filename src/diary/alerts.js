@@ -3,6 +3,7 @@ import { readJson } from '../util/atomic-write.js';
 import { safeError } from '../util/logging.js';
 
 function incidentKey(meta, key, step) {
+  if (meta.kind === 'transcript_repair') return `Transcript repair:${step.last_error?.code || 'OPERATION_FAILED'}`;
   // One provider outage can fail several files and several entries. Notify once
   // for that shared problem; individual uncertain messages remain separate.
   if (step.ambiguous_delivery) return `telegram:${meta.entry_id || meta.date}:${key}`;
@@ -21,7 +22,11 @@ export async function updateAlerts(ctx, meta, save) {
   const { entries, days, issues, deletions = [] } = await ctx.store.scan();
   let aggregates;
   try { aggregates = await readJson(join(ctx.store.root, 'aggregates', 'metadata.json'), null); } catch { /* Status reports corrupt derived state. */ }
-  const records = [...entries, ...days, ...deletions, state, ...(aggregates?.upload_requested === true && aggregates.steps ? [aggregates] : [])];
+  let repair;
+  try { repair = await readJson(join(ctx.store.root, 'repairs', 'current.json'), null); } catch { /* Status reports corrupt repair state. */ }
+  const records = [...entries, ...days, ...deletions, state,
+    ...(repair && !repair.completed_at && repair.steps ? [repair] : []),
+    ...(aggregates?.upload_requested === true && aggregates.steps ? [aggregates] : [])];
   const active = new Map();
   if (issues.length) active.set('Local files:LOCAL_SOURCE_INVALID', issues.map(issue => `${issue.id}: ${issue.operation}`));
   for (const day of days) {

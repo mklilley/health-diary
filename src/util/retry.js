@@ -49,7 +49,7 @@ export function createStepRunner(ctx) {
         if (ambiguous) { step.ambiguous_delivery = true; step.last_error = { ...safe, message: 'Telegram delivery uncertain; verify chat before manual recovery' }; }
         await save(meta);
         log('operation_failed', { telegram_user_id: config.diaryUserId, entry_id: meta.entry_id, date: meta.date, step: key, attempt: step.attempts, code: safe.code });
-        if (!isTransient(error) || ambiguous || i === attempts - 1 || providerDelay > 60_000) return false;
+        if (!isTransient(error) || ambiguous || safe.code === 'REPAIR_PENDING' || i === attempts - 1 || providerDelay > 60_000) return false;
         const delay = (config.retryBaseMs ?? 1000) * 2 ** i * (0.8 + random() * 0.4);
         await sleep(Math.min(60_000, Math.max(delay, Number.isFinite(providerDelay) ? providerDelay : 0)));
       }
