@@ -5,7 +5,8 @@ import { atomicWrite, exists } from '../util/atomic-write.js';
 import { entryIdentity } from '../util/dates.js';
 import { makeSteps, entrySteps } from './metadata.js';
 import { version as entryPromptVersion } from '../prompts/entry-summary-v1.js';
-import { getTranscriptionSettings } from '../prompts/transcription-v2.js';
+import { getTranscriptionSettings } from '../prompts/transcription-v3.js';
+import { applyTranscriptionCorrections } from '../transcription/vocabulary.js';
 
 export async function receiveVoice(ctx, message) {
   const { config, store } = ctx;
@@ -19,7 +20,7 @@ export async function receiveVoice(ctx, message) {
   if (old) return old;
   const { entryId, receivedAt, date } = entryIdentity(message);
   if (issues.some(issue => issue.id === entryId)) throw new Error('Entry metadata needs repair before redelivery');
-  const transcription = getTranscriptionSettings(config.transcriptionModel);
+  const transcription = getTranscriptionSettings(config.transcriptionModel, { transcriptionCorrections: config.transcriptionCorrections });
   const metadata = {
     schema_version: 1, entry_id: entryId, date,
     telegram_user_id: message.from.id, telegram_chat_id: message.chat.id,
@@ -75,7 +76,10 @@ export async function processEntry(ctx, entry, { force = false } = {}) {
           model: entry.transcription_model, configuration: entry.transcription_configuration,
         });
         if (typeof transcript !== 'string' || !transcript.trim()) throw Object.assign(new Error('Empty transcription'), { status: 422 });
-        await atomicWrite(transcriptPath, transcript);
+        // Save the corrected source before any summary, Drive upload or Sheet
+        // row is produced. Existing files and old receipts are never rewritten.
+        await atomicWrite(transcriptPath, applyTranscriptionCorrections(transcript,
+          entry.transcription_configuration?.correction_profiles));
       }
     });
   }

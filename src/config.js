@@ -1,6 +1,7 @@
 import { loadEnvFile } from 'node:process';
 import { resolve } from 'node:path';
 import { readFileSync } from 'node:fs';
+import { getVocabularyProfiles } from './transcription/vocabulary.js';
 
 export class ConfigurationError extends Error {
   constructor(message) {
@@ -15,15 +16,19 @@ export function validateDiaryUsers(value) {
   const ids = new Set();
   return Object.freeze(value.map(user => {
     if (!user || typeof user !== 'object' || Array.isArray(user)
-      || Object.keys(user).some(key => !['telegramUserId', 'label'].includes(key))
+      || Object.keys(user).some(key => !['telegramUserId', 'label', 'transcriptionCorrections'].includes(key))
       || !Number.isSafeInteger(user.telegramUserId) || user.telegramUserId <= 0
       || typeof user.label !== 'string' || !user.label.trim() || user.label.trim().length > 80
       || /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/.test(user.label)) {
-      throw new ConfigurationError('Each diary user requires a positive numeric telegramUserId and a single-line label of 1–80 characters, with no other fields.');
+      throw new ConfigurationError('Each diary user requires a positive numeric telegramUserId and a single-line label of 1–80 characters. Only transcriptionCorrections is supported as an optional field.');
     }
+    let corrections;
+    try { corrections = getVocabularyProfiles(user.transcriptionCorrections).map(profile => profile.id); }
+    catch { throw new ConfigurationError('transcriptionCorrections must be a list of distinct, supported vocabulary profile IDs.'); }
     if (ids.has(user.telegramUserId)) throw new ConfigurationError('DIARY_USERS_FILE contains duplicate Telegram user IDs.');
     ids.add(user.telegramUserId);
-    return Object.freeze({ telegramUserId: user.telegramUserId, label: user.label.trim() });
+    return Object.freeze({ telegramUserId: user.telegramUserId, label: user.label.trim(),
+      ...(user.transcriptionCorrections !== undefined ? { transcriptionCorrections: Object.freeze(corrections) } : {}) });
   }));
 }
 

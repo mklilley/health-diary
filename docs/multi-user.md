@@ -17,6 +17,18 @@ The private `users.json` file lists allowed diary users. Copyable examples are i
 
 Labels can change without changing identity or paths. Registry edits take effect when the bot restarts; scheduled jobs read them on their next run. Removing a user stops access and scheduled work for that diary but preserves its files. `users.json` is ignored by Git; keep any custom registry path private too.
 
+### Optional vocabulary corrections
+
+Select vocabulary profiles using `transcriptionCorrections` in each person's record in the **server's** `users.json`, then restart the bot. For someone who means **Quorn** whenever they say standalone “corn”, enable the `corn-quorn-v1` profile:
+
+```json
+{ "telegramUserId": 987654321, "label": "Sam", "transcriptionCorrections": ["corn-quorn-v1"] }
+```
+
+Omit the setting or use `[]` to use the general transcription prompt without vocabulary-specific hints or automatic text corrections. Profiles apply only to that person's newly received recordings. The `corn-quorn-v1` profile resolves “corn with a Q” and “Quorn with a Q” to **Quorn**, then changes other standalone “corn” to **Quorn**, except within these allowed phrases: **corn cakes**, **pop corn**, **corn flakes**, **sweetcorn**, **sweet corn**, and **corn on the cob**. Matching ignores case and accepts spaces or hyphens between words. An explicit **“with a C”** overrides the personal default and becomes **corn**. Whole words inside longer words, such as `popcorn`, are not replaced.
+
+Profile definitions, protected phrases and correction logic are in [vocabulary.js](../src/transcription/vocabulary.js). Additional word or phrase rules can be added there as named profiles and selected through the same setting. Unknown or duplicate profile names are rejected. Profiles run in the listed order, once, before the transcript is saved and before summaries or uploads. The recording stays unchanged. Each entry saves its prompt and profile IDs so pending work uses the same rules after a restart, even if the setting changes. Keep published profile versions stable when adding new ones. Existing transcripts and summaries are not rewritten. Pulling code updates does not update the private server registry.
+
 ## Storage
 
 Each diary uses `data/users/<Telegram-ID>/`, with its own entries, days, aggregates, status, start date and archive bindings. `data/telegram.json` retains the shared Telegram cursor; `data/polling.json` records shared connection health. New diaries start on the date they are first enabled.

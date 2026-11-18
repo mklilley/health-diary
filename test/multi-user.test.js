@@ -168,6 +168,76 @@ test('real multi-user undo removes only its sender’s entry despite identical I
   assert.deepEqual(await restarted.receiveVoice(f.voice(202)), { entry_id: sam.entry_id, deleted: true });
 });
 
+test('only the opted-in diary corrects new transcripts before summaries, Drive and Sheets', async t => {
+  const f = await fixture(t);
+  f.config.transcriptionModel = 'gpt-transcribe';
+  f.config.diaryUsers = f.config.diaryUsers.map(user => ({ ...user, transcriptionCorrections: user.telegramUserId === 202 ? ['corn-quorn-v1'] : [] }));
+  const raw = 'Maybe corn with a Q, corn pieces, corn flakes, sweet corn and corn on the cob. Also corn with a C. Not sure about the timing.';
+  const corrected = 'Maybe Quorn, Quorn pieces, corn flakes, sweet corn and corn on the cob. Also corn. Not sure about the timing.';
+  f.services.openai.transcribe = async () => raw;
+  const app = await createMultiDiary(f.options);
+  for (const id of [101, 202]) {
+    const receipt = await handleUpdate({ message: f.voice(id) }, { ...f, app });
+    const expected = id === 202 ? corrected : raw;
+    const directory = f.userPath(id, 'entries', receipt.date, receipt.entry_id);
+    assert.equal(await readFile(join(directory, 'transcript.md'), 'utf8'), expected);
+    assert.equal(await readFile(join(directory, 'summary.md'), 'utf8'), `Entry summary: ${expected}`);
+    assert.equal(await readFile(join(directory, 'audio.ogg'), 'utf8'), `Synthetic source voice-${id}-1.`);
+    const metadata = await readJson(join(directory, 'metadata.json'));
+    assert.equal(metadata.transcription_prompt_version, '3');
+    assert.deepEqual(metadata.transcription_configuration.correction_profiles, id === 202 ? ['corn-quorn-v1'] : undefined);
+    assert.equal(f.files.get(`${metadata.drive_folder_id}/transcript.md`).content, expected);
+    assert.equal(f.files.get(`${metadata.drive_folder_id}/summary.md`).content, `Entry summary: ${expected}`);
+    const archive = await readJson(f.userPath(id, 'archive.json'));
+    assert.equal(f.sheets.get(archive.spreadsheet_id).entries.get(receipt.entry_id).summary, `Entry summary: ${expected}`);
+  }
+  f.setNow('2026-09-10T02:00:00Z');
+  await app.recordPoll();
+  await app.daily();
+  assert.deepEqual(f.summaries.map(day => day.sources[0].transcript), [raw, corrected]);
+  const samDay = await readJson(f.userPath(202, 'days', '2026-09-09', 'metadata.json'));
+  assert.equal(f.files.get(`${samDay.drive_folder_id}/summary.md`).content, `Daily summary: ${corrected}`);
+  const archive = await readJson(f.userPath(202, 'archive.json'));
+  assert.equal(f.sheets.get(archive.spreadsheet_id).days.get('2026-09-09').summary, `Daily summary: ${corrected}`);
+});
+
+test('changing the personal rule affects new receipts only, including failed transcription retried after restart', async t => {
+  const f = await fixture(t);
+  f.config.transcriptionModel = 'gpt-transcribe';
+  const raw = 'Corn with a Q and corn flakes.';
+  f.services.openai.transcribe = async () => raw;
+  const old = await f.app.receiveVoice(f.voice(202, 1));
+  // Simulate an older pending receipt with the exact saved v2 prompt/options.
+  const oldPath = f.userPath(202, 'entries', old.date, old.entry_id, 'metadata.json');
+  const oldMetadata = await readJson(oldPath);
+  const v2 = await import('../src/prompts/transcription-v2.js');
+  oldMetadata.transcription_prompt_version = v2.version;
+  oldMetadata.transcription_configuration = { ...v2.transcriptionOptions };
+  await atomicWriteJson(oldPath, oldMetadata);
+  f.config.diaryUsers = f.config.diaryUsers.map(user => ({ ...user, transcriptionCorrections: user.telegramUserId === 202 ? ['corn-quorn-v1'] : [] }));
+  const enabled = await createMultiDiary(f.options);
+  f.faults.add(202);
+  const pending = await handleUpdate({ message: f.voice(202, 2) }, { ...f, app: enabled });
+  const pendingPath = f.userPath(202, 'entries', pending.date, pending.entry_id, 'metadata.json');
+  const saved = (await readJson(pendingPath)).transcription_configuration;
+  assert.deepEqual(saved.correction_profiles, ['corn-quorn-v1']);
+  f.config.diaryUsers = f.config.diaryUsers.map(user => ({ ...user, transcriptionCorrections: [] }));
+  f.faults.clear();
+  const restarted = await createMultiDiary(f.options);
+  await restarted.processEntry(old.entry_id, 202);
+  await restarted.processEntry(pending.entry_id, 202);
+  assert.equal(await readFile(f.userPath(202, 'entries', old.date, old.entry_id, 'transcript.md'), 'utf8'), raw);
+  assert.equal(await readFile(f.userPath(202, 'entries', pending.date, pending.entry_id, 'transcript.md'), 'utf8'), 'Quorn and corn flakes.');
+  assert.deepEqual((await readJson(oldPath)).transcription_configuration, oldMetadata.transcription_configuration);
+  assert.deepEqual((await readJson(pendingPath)).transcription_configuration, saved);
+  const newReceipt = await handleUpdate({ message: f.voice(202, 3) }, { ...f, app: restarted });
+  assert.equal(await readFile(f.userPath(202, 'entries', newReceipt.date, newReceipt.entry_id, 'transcript.md'), 'utf8'), raw);
+  // Re-enabling the rule and retrying a completed old entry cannot rewrite it.
+  f.config.diaryUsers = f.config.diaryUsers.map(user => ({ ...user, transcriptionCorrections: ['corn-quorn-v1'] }));
+  await (await createMultiDiary(f.options)).processEntry(old.entry_id, 202);
+  assert.equal(await readFile(f.userPath(202, 'entries', old.date, old.entry_id, 'transcript.md'), 'utf8'), raw);
+});
+
 test('bot backlog preserves both owners even when entry IDs collide and shares one durable cursor', async t => {
   const f = await fixture(t);
   const batches = [[101, 202].map((id, index) => ({ update_id: index + 8, message: f.voice(id) })), []];

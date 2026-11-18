@@ -25,6 +25,7 @@ export async function createMultiDiary({ config, services = {}, now = () => new 
   const polling = await createPollingState({ config, services, now });
   const configs = new Map(users.map(user => [user.telegramUserId, Object.freeze({ ...config,
     diaryUserId: user.telegramUserId, diaryLabel: user.label, requireDiaryOwner: true,
+    transcriptionCorrections: user.transcriptionCorrections ?? Object.freeze([]),
     dataDir: join(config.dataDir, 'users', String(user.telegramUserId)),
     diaryStartDate: null, googleSheetId: null,
     pollingStateFile: join(config.dataDir, 'polling.json'),

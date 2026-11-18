@@ -17,7 +17,7 @@ import { loadGoogleAuth, makeGoogleAuth } from '../src/services/google-auth.js';
 import { validOAuthState, provisionGoogleArchive } from '../src/jobs/google-auth.js';
 import { prompt as entryPrompt, version as entryVersion } from '../src/prompts/entry-summary-v1.js';
 import { prompt as dayPrompt, version as dayVersion } from '../src/prompts/daily-summary-v1.js';
-import { prompt as transcriptionPrompt } from '../src/prompts/transcription-v2.js';
+import { getTranscriptionSettings, prompt as transcriptionPrompt } from '../src/prompts/transcription-v3.js';
 
 const config = { httpTimeoutMs: 1000, telegramBotToken: 'not-a-real-token', googleSheetId: 'sheet-test', transcriptionModel: 'audio-model', entrySummaryModel: 'entry-model', dailySummaryModel: 'day-model' };
 async function fileFixture(t, bytes = Buffer.from('OggS synthetic fixture')) {
@@ -188,6 +188,7 @@ test('OpenAI SDK sends vocabulary hints as multipart fields and honors saved tra
     assert.equal(form.get('response_format'), 'json');
     assert.equal(form.has('original_format'), false);
     assert.equal(form.has('language'), false);
+    assert.equal(form.has('correction_profiles'), false);
     return new Response(JSON.stringify({ text: transcript, languages: [{ code: 'en' }] }), {
       headers: { 'content-type': 'application/json' },
     });
@@ -196,7 +197,7 @@ test('OpenAI SDK sends vocabulary hints as multipart fields and honors saved tra
   assert.equal(await openai.transcribe(fixture.path), transcript);
   assert.equal(requests[0].get('model'), 'gpt-transcribe');
   assert.equal(requests[0].get('prompt'), transcriptionPrompt);
-  assert.deepEqual(requests[0].getAll('keywords[]'), ['Quorn', 'corn']);
+  assert.equal(requests[0].has('keywords[]'), false);
 
   await openai.transcribe(fixture.path, { model: 'gpt-4o-transcribe' });
   assert.equal(requests[1].get('model'), 'gpt-4o-transcribe');
@@ -216,6 +217,11 @@ test('OpenAI SDK sends vocabulary hints as multipart fields and honors saved tra
   } });
   assert.equal(requests[3].get('prompt'), 'Previously saved food vocabulary.');
   assert.deepEqual(requests[3].getAll('keywords[]'), ['Quorn']);
+
+  const personal = getTranscriptionSettings('gpt-transcribe', { transcriptionCorrections: ['corn-quorn-v1'] });
+  await openai.transcribe(fixture.path, { configuration: personal.options });
+  assert.equal(requests[4].get('prompt'), personal.options.prompt);
+  assert.deepEqual(requests[4].getAll('keywords[]'), ['Quorn', 'corn']);
 });
 
 test('OpenAI rejects incomplete, refused and empty summaries', async () => {

@@ -90,3 +90,15 @@ test('user registry rejects ambiguous IDs, invalid labels and unsupported fields
     ...['', '  ', 'A\nB', 'A\tB', 'A\u2028B', 'a'.repeat(81)].map(label => [{ ...user, label }]),
     [{ ...user, rootFolder: 'somewhere' }]]) assert.throws(() => validateDiaryUsers(value), { code: 'CONFIGURATION_ERROR' });
 });
+
+test('vocabulary profiles are optional per-user lists with validated, distinct names', () => {
+  const alex = { telegramUserId: 101, label: 'Alex' };
+  const sam = { telegramUserId: 202, label: 'Sam', transcriptionCorrections: ['corn-quorn-v1'] };
+  assert.deepEqual(validateDiaryUsers([alex, sam]), [alex, sam]);
+  assert.deepEqual(validateDiaryUsers([{ ...alex, transcriptionCorrections: [] }])[0].transcriptionCorrections, []);
+  const validated = validateDiaryUsers([sam]);
+  assert.ok(Object.isFrozen(validated[0].transcriptionCorrections));
+  for (const invalid of [true, false, 'corn-quorn-v1', 1, null, {}, ['unknown'], ['toString'], ['corn-quorn-v1', 'corn-quorn-v1']]) {
+    assert.throws(() => validateDiaryUsers([{ ...alex, transcriptionCorrections: invalid }]), { code: 'CONFIGURATION_ERROR' });
+  }
+});

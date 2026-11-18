@@ -2,7 +2,7 @@ import { createReadStream } from 'node:fs';
 import OpenAI from 'openai';
 import { prompt as entryPrompt } from '../prompts/entry-summary-v1.js';
 import { prompt as dailyPrompt } from '../prompts/daily-summary-v1.js';
-import { getTranscriptionSettings } from '../prompts/transcription-v2.js';
+import { getTranscriptionSettings } from '../prompts/transcription-v3.js';
 import { guarded, ServiceError } from './errors.js';
 
 function requiredText(value) {
@@ -23,7 +23,7 @@ export function createOpenAIService(config, { client } = {}) {
   });
   return {
     transcribe: (audioPath, { model = config.transcriptionModel,
-      configuration = getTranscriptionSettings(model).options } = {}) => guarded('openai', async () => {
+      configuration = getTranscriptionSettings(model, { transcriptionCorrections: config.transcriptionCorrections }).options } = {}) => guarded('openai', async () => {
       const stream = createReadStream(audioPath);
       try {
         // Stored configuration also includes archive metadata, which is not an API parameter.

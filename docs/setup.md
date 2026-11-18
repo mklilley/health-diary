@@ -55,6 +55,8 @@ The example configuration selects `gpt-transcribe` for transcription and `gpt-4.
 
 For an existing installation, update the model settings in the server's `.env` and restart the bot. Pulling code updates does not change that private file. New recordings use the configured transcription model; pending recordings keep the model saved when they were received.
 
+New GPT Transcribe recordings use a general diary transcription prompt. Selected [per-user vocabulary profiles](multi-user.md#optional-vocabulary-corrections) add their own prompt guidance, keyword hints and automatic text corrections. The corn/Quorn profile resolves spelling clarifications and corrects standalone “corn” while preserving the listed corn foods. Profiles take effect for newly received recordings.
+
 ## 3. Google Drive and Sheets
 
 Use the Google account that should own the diary archive. Complete these steps on a computer with a browser, outside the SSH session, using a local checkout with `npm ci` completed and `.env` prepared.
