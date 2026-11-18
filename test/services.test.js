@@ -86,7 +86,7 @@ test('Telegram repeats diary identification on every chunk and attaches buttons 
   assert.equal(result.message_id, 3);
 });
 
-test('Telegram requests callback updates and scopes the command menu to the admin private chat', async () => {
+test('Telegram scopes deletion to diary users and admin controls to the admin private chat', async () => {
   const calls = [];
   const telegram = createTelegramService(config, { fetchImpl: async (url, options) => {
     calls.push({ method: url.split('/').at(-1), body: JSON.parse(options.body) });
@@ -95,13 +95,18 @@ test('Telegram requests callback updates and scopes the command menu to the admi
   await telegram.getUpdates({ offset: 20, timeout: 0 });
   await telegram.answerCallbackQuery('query-1');
   await telegram.removeKeyboard(202, 7);
-  await telegram.setAdminCommands(202);
+  await telegram.setCommands(202, { admin: true, diary: true });
+  await telegram.setCommands(101, { diary: true });
+  await telegram.setCommands(303, { admin: true });
   assert.deepEqual(calls[0].body, { offset: 20, timeout: 0, allowed_updates: ['message', 'callback_query'] });
   assert.deepEqual(calls[1], { method: 'answerCallbackQuery', body: { callback_query_id: 'query-1', cache_time: 0 } });
   assert.deepEqual(calls[2], { method: 'editMessageReplyMarkup', body: { chat_id: 202, message_id: 7, reply_markup: { inline_keyboard: [] } } });
   assert.equal(calls[3].method, 'setMyCommands');
   assert.deepEqual(calls[3].body.scope, { type: 'chat', chat_id: 202 });
-  assert.deepEqual(calls[3].body.commands.map(command => command.command), ['admin', 'cancel']);
+  assert.deepEqual(calls[3].body.commands.map(command => command.command), ['delete_last', 'admin', 'cancel']);
+  assert.deepEqual(calls[4].body.scope, { type: 'chat', chat_id: 101 });
+  assert.deepEqual(calls[4].body.commands.map(command => command.command), ['delete_last', 'help']);
+  assert.deepEqual(calls[5].body.commands.map(command => command.command), ['admin', 'cancel']);
 });
 
 test('Telegram API errors retain status without secrets or raw provider descriptions', async () => {
@@ -229,7 +234,20 @@ function driveMock() {
   let creates = 0;
   let updates = 0;
   let loseNextCreate = false;
+  let loseNextDelete = false;
   const client = { files: {
+    delete: async ({ fileId }, options) => {
+      assert.equal(options.retry, false);
+      if (!objects.some(file => file.id === fileId)) throw Object.assign(new Error('Missing'), { code: 404 });
+      const remove = id => {
+        for (const child of objects.filter(file => file.parents?.includes(id))) remove(child.id);
+        const index = objects.findIndex(file => file.id === id);
+        if (index >= 0) objects.splice(index, 1);
+      };
+      remove(fileId);
+      if (loseNextDelete) { loseNextDelete = false; throw Object.assign(new Error('Lost delete response'), { code: 'ECONNRESET' }); }
+      return { data: {} };
+    },
     list: async (request, options) => {
       assert.equal(options.retry, false);
       const parent = request.q.match(/^'([^']+)'/)[1];
@@ -260,7 +278,8 @@ function driveMock() {
       return { data: file };
     },
   } };
-  return { client, objects, get creates() { return creates; }, get updates() { return updates; }, loseCreate: () => { loseNextCreate = true; } };
+  return { client, objects, get creates() { return creates; }, get updates() { return updates; },
+    loseCreate: () => { loseNextCreate = true; }, loseDelete: () => { loseNextDelete = true; } };
 }
 
 test('Drive finds folders after ambiguous create and never makes blind duplicates', async () => {
@@ -359,15 +378,88 @@ test('Drive refuses duplicate names and never silently replaces a conflicting ta
   assert.equal(mock.creates, 0);
 });
 
+test('Drive deletes only the verified entry folder and survives a lost delete response', async t => {
+  const { path } = await fileFixture(t);
+  const mock = driveMock();
+  const drive = createDriveService(config, { client: mock.client });
+  const entries = await drive.ensureFolder('diary-101', 'entries');
+  const day = await drive.ensureFolder(entries.id, '2026-09-09');
+  const target = await drive.ensureFolder(day.id, 'entry-to-delete');
+  const sibling = await drive.ensureFolder(day.id, 'entry-to-keep');
+  for (const name of ['audio.ogg', 'transcript.md', 'summary.md', 'metadata.json']) {
+    await drive.putFile({ parentId: target.id, name, path, mimeType: 'text/plain' });
+  }
+  const request = { rootFolderId: 'diary-101', date: '2026-09-09', entryId: 'entry-to-delete', folderId: target.id };
+  await assert.rejects(drive.deleteEntryFolder({ ...request, rootFolderId: 'diary-202' }), { code: 'REMOTE_OBJECT_CONFLICT' });
+  assert.ok(mock.objects.some(file => file.id === target.id));
+  mock.loseDelete();
+  await assert.rejects(drive.deleteEntryFolder(request), { code: 'ECONNRESET' });
+  await drive.deleteEntryFolder(request);
+  assert.deepEqual(mock.objects.map(file => file.id), [entries.id, day.id, sibling.id]);
+  const deletes = [];
+  mock.client.files.get = async () => { throw Object.assign(new Error('Not found'), { response: { status: 404 } }); };
+  mock.client.files.delete = async args => { deletes.push(args); };
+  await drive.deleteEntryFolder(request);
+  assert.deepEqual(deletes, []);
+});
+
+test('Drive finds an entry after an ambiguous folder create without provisioning during deletion', async () => {
+  const mock = driveMock();
+  const drive = createDriveService(config, { client: mock.client });
+  const entries = await drive.ensureFolder('root', 'entries');
+  const day = await drive.ensureFolder(entries.id, '2026-09-09');
+  mock.loseCreate();
+  await assert.rejects(drive.ensureFolder(day.id, 'entry'), { code: 'ECONNRESET' });
+  const creates = mock.creates;
+  await drive.deleteEntryFolder({ rootFolderId: 'root', date: '2026-09-09', entryId: 'entry' });
+  await drive.deleteEntryFolder({ rootFolderId: 'never-created', date: '2026-09-09', entryId: 'entry' });
+  assert.equal(mock.creates, creates);
+  assert.equal(mock.objects.length, 2);
+});
+
+test('archive deletion uses the owner’s existing Sheet and never provisions a missing archive', async t => {
+  const { dir } = await fileFixture(t);
+  const mock = driveMock();
+  const drive = createDriveService(config, { client: mock.client });
+  const calls = [];
+  const scoped = { ...config, dataDir: dir, diaryUserId: 101, googleDriveRootFolderId: 'root' };
+  const services = createDiaryArchive(scoped, { drive, sheetsFactory: c => ({
+    ensureTabs: async () => {}, deleteEntry: async entryId => calls.push([c.googleSheetId, entryId]),
+  }) });
+  assert.equal(await services.archive.existingRootFolder(), null);
+  await services.sheets.deleteEntry('entry');
+  assert.equal(mock.creates, 0);
+  await services.sheets.ensureTabs();
+  const binding = await readJson(join(dir, 'archive.json'));
+  await services.sheets.deleteEntry('entry');
+  assert.deepEqual(calls, [[binding.spreadsheet_id, 'entry']]);
+  assert.equal(mock.creates, 2);
+  mock.objects.find(file => file.id === binding.spreadsheet_id).parents = ['other-owner'];
+  await assert.rejects(services.sheets.deleteEntry('entry'), { code: 'REMOTE_OBJECT_CONFLICT' });
+  assert.equal(calls.length, 1);
+});
+
 function sheetsMock() {
   const tabs = {};
   let appends = 0;
   let updates = 0;
   let loseNextAppend = false;
+  let loseNextDelete = false;
   const tabName = (range) => range.match(/^'([^']+)'/)[1];
   const client = { spreadsheets: {
-    get: async () => ({ data: { sheets: Object.keys(tabs).map((title) => ({ properties: { title } })) } }),
-    batchUpdate: async ({ requestBody }) => { for (const request of requestBody.requests) tabs[request.addSheet.properties.title] = []; return { data: {} }; },
+    get: async () => ({ data: { sheets: Object.keys(tabs).map((title, sheetId) => ({ properties: { title, sheetId } })) } }),
+    batchUpdate: async ({ requestBody }) => {
+      for (const request of requestBody.requests) {
+        if (request.addSheet) tabs[request.addSheet.properties.title] = [];
+        if (request.deleteDimension) {
+          const { sheetId, dimension, startIndex, endIndex } = request.deleteDimension.range;
+          assert.equal(dimension, 'ROWS');
+          tabs[Object.keys(tabs)[sheetId]].splice(startIndex, endIndex - startIndex);
+          if (loseNextDelete) { loseNextDelete = false; throw Object.assign(new Error('Lost delete response'), { status: 503 }); }
+        }
+      }
+      return { data: {} };
+    },
     values: {
       get: async ({ range }) => ({ data: { values: tabs[tabName(range)] } }),
       update: async ({ range, requestBody, valueInputOption }, options) => {
@@ -384,7 +476,8 @@ function sheetsMock() {
       },
     },
   } };
-  return { client, tabs, get appends() { return appends; }, get updates() { return updates; }, loseAppend: () => { loseNextAppend = true; } };
+  return { client, tabs, get appends() { return appends; }, get updates() { return updates; },
+    loseAppend: () => { loseNextAppend = true; }, loseDelete: () => { loseNextDelete = true; } };
 }
 
 test('Sheets creates exact tabs, preserves literal summary and deduplicates lost append responses', async () => {
@@ -417,6 +510,26 @@ test('Sheets repairs the existing derived row, validates headers and rejects dup
   await assert.rejects(sheets.upsertDay(row), { code: 'DUPLICATE_REMOTE_KEY' });
   mock.tabs.Days[0][0] = 'Wrong heading';
   await assert.rejects(sheets.upsertDay(row), { code: 'HEADER_MISMATCH' });
+});
+
+test('Sheets deletion re-finds by entry ID after a lost response, preserving neighbouring rows and Days', async () => {
+  const mock = sheetsMock();
+  const sheets = createSheetsService(config, { client: mock.client });
+  await sheets.deleteEntry('missing');
+  assert.deepEqual(mock.tabs, {}, 'deletion should not create tabs');
+  for (const id of ['before', 'remove', 'after']) await sheets.upsertEntry({ entryId: id,
+    receivedAt: 'fixture', summary: `Summary ${id}`, audioLink: 'audio', transcriptLink: 'transcript' });
+  await sheets.upsertDay({ date: '2026-09-09', summary: 'Daily fixture', entryCount: 3 });
+  const days = structuredClone(mock.tabs.Days);
+  mock.loseDelete();
+  await assert.rejects(sheets.deleteEntry('remove'), { status: 503 });
+  await sheets.deleteEntry('remove');
+  assert.deepEqual(mock.tabs.Entries.map(row => row[0]), ['Entry ID', 'before', 'after']);
+  assert.deepEqual(mock.tabs.Days, days);
+  mock.tabs.Entries.push([...mock.tabs.Entries[1]]);
+  await assert.rejects(sheets.deleteEntry('before'), { code: 'DUPLICATE_REMOTE_KEY' });
+  mock.tabs.Entries[0][0] = 'Unexpected column';
+  await assert.rejects(sheets.deleteEntry('after'), { code: 'HEADER_MISMATCH' });
 });
 
 test('versioned prompts preserve uncertainty, corrections and forbid diagnosis and causation', () => {

@@ -36,9 +36,12 @@ export async function runBot({
     const entries = new Map();
     const interactions = [];
 
-    if (app.multiUser && services.telegram.setAdminCommands) {
-      try { await services.telegram.setAdminCommands(config.adminUserId); }
-      catch (error) { logger('telegram_admin_commands_failed', safeError(error)); }
+    if (services.telegram.setCommands) {
+      const diaryIds = config.diaryUsers?.map(user => user.telegramUserId) ?? [config.diaryUserId];
+      for (const id of new Set([...diaryIds, config.adminUserId])) {
+        try { await services.telegram.setCommands(id, { admin: id === config.adminUserId, diary: diaryIds.includes(id) }); }
+        catch (error) { logger('telegram_commands_failed', { telegram_user_id: id, ...safeError(error) }); }
+      }
     }
     logger('bot_started');
     if (typeof process.send === 'function') process.send('ready');
@@ -61,7 +64,7 @@ export async function runBot({
             if (isDiaryVoice(update, config)) {
               const entry = await handleUpdate(update, { app, services, config, process: false, now });
               const ownerId = update.message.from.id;
-              entries.set(`${ownerId}:${entry.entry_id}`, { entryId: entry.entry_id, ownerId });
+              if (!entry.deleted) entries.set(`${ownerId}:${entry.entry_id}`, { entryId: entry.entry_id, ownerId });
             } else if (isInteraction(update, config)) {
               if (update.callback_query) await acknowledgeCallback(update.callback_query, { config, services });
               interaction = update;

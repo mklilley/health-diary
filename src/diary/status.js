@@ -5,7 +5,7 @@ import { addDays, localDate, localTimestamp, validateDate, finalisationCutoff } 
 import { exportResult, validAggregateMetadata } from './aggregates.js';
 
 export async function statusIndex(ctx) {
-  const { entries, days, issues } = await ctx.store.scan();
+  const { entries, days, issues, deletions } = await ctx.store.scan();
   const operations = [];
   const add = (id, key, step) => {
     if (step.status !== 'complete') operations.push({ id, operation: key, ...step });
@@ -15,6 +15,7 @@ export async function statusIndex(ctx) {
     }
   };
   for (const entry of entries) for (const [key, step] of Object.entries(entry.steps)) add(entry.entry_id, key, step);
+  for (const deletion of deletions) for (const [key, step] of Object.entries(deletion.steps)) add(deletion.entry_id, key, step);
   for (const day of days) {
     if (day.date <= finalisationCutoff(ctx.now())) for (const [key, step] of Object.entries(day.steps)) add(day.date, key, step);
     if (day.reminder_sent && day.reminder?.status !== 'complete') add(day.date, 'reminder_delivery', { ...day.reminder, status: 'attention' });

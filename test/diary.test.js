@@ -56,6 +56,11 @@ async function fixture(t, initial = '2026-09-09T12:00:00Z', diaryStartDate = '20
       },
     },
     drive: {
+      deleteEntryFolder: async ({ folderId }) => {
+        record('deleteDrive', folderId); fail('deleteDrive');
+        for (const [key, file] of files) if (file.parentId === folderId) files.delete(key);
+        for (const [key, folder] of folders) if (folder.id === folderId) folders.delete(key);
+      },
       ensureFolder: async (parentId, name) => {
         record('folder', { parentId, name }); fail('folder');
         const key = `${parentId}/${name}`;
@@ -71,6 +76,7 @@ async function fixture(t, initial = '2026-09-09T12:00:00Z', diaryStartDate = '20
       },
     },
     sheets: {
+      deleteEntry: async entryId => { record('deleteSheet', entryId); fail('deleteSheet'); rows.delete(entryId); },
       upsertEntry: async (entry) => { record('sheetEntry', entry); fail('sheetEntry'); rows.set(entry.entryId, entry); return { row: rows.size + 1 }; },
       upsertDay: async (day) => { record('sheetDay', day); fail('sheetDay'); days.set(day.date, day); return { row: days.size + 1 }; },
     },
@@ -730,4 +736,125 @@ test('an undelivered transcription-delay notice is superseded when transcription
   assert.equal(metadata.steps.telegram_pending_notice.superseded, true);
   assert.equal(f.sent.filter(message => message.text.startsWith('Recorded ✓')).length, 1);
   assert.equal(f.sent.filter(message => /couldn't transcribe/.test(message.text)).length, 0);
+});
+
+test('undo deletes only today’s latest source and Sheet row, keeps exports byte-for-byte, and blocks redelivery', async t => {
+  const f = await fixture(t);
+  const previous = await handleUpdate({ message: f.voice(1, '2026-09-08T12:00:00Z') }, f);
+  const first = await handleUpdate({ message: f.voice(2) }, f);
+  const last = await handleUpdate({ message: f.voice(3) }, f);
+  const meta = await f.entry(last);
+  await f.app.exportAggregates();
+  const names = ['all-transcripts.md', 'all-entry-summaries.md', 'all-daily-summaries.md', 'metadata.json'];
+  const exports = await Promise.all(names.map(name => readFile(join(f.config.dataDir, 'aggregates', name))));
+  const remoteExports = [...f.files.values()].filter(file => file.name.startsWith('all-')).map(file => structuredClone(file));
+  const oldDay = await readFile(join(f.config.dataDir, 'days', previous.date, 'metadata.json'));
+  const target = await f.app.lastEntryToday();
+  assert.equal(target.entry_id, last.entry_id);
+  assert.match(target.preview, /Stored short summary/);
+  assert.deepEqual(await f.app.deleteLastEntryToday({ entryId: target.entry_id, date: target.date }), { status: 'complete' });
+  assert.equal(await exists(f.entryDirectory(last)), false);
+  assert.equal(await exists(f.entryDirectory(first)), true);
+  assert.equal(await exists(f.entryDirectory(previous)), true);
+  assert.equal(f.rows.has(last.entry_id), false);
+  assert.equal(f.rows.size, 2);
+  assert.ok(![...f.files.values()].some(file => file.parentId === meta.drive_folder_id));
+  assert.deepEqual(await readFile(join(f.config.dataDir, 'days', previous.date, 'metadata.json')), oldDay);
+  assert.equal((await f.day(last.date)).entry_count, 1);
+  assert.match(await f.app.showDay(last.date), /Number of entries so far: 1/);
+  assert.equal(f.count('summarizeDay'), 0);
+  for (const [i, name] of names.entries()) assert.deepEqual(await readFile(join(f.config.dataDir, 'aggregates', name)), exports[i]);
+  assert.deepEqual([...f.files.values()].filter(file => file.name.startsWith('all-')), remoteExports);
+  const record = JSON.parse(await readFile(join(f.config.dataDir, 'deletions', `${last.entry_id}.json`)));
+  assert.equal(record.telegram_user_id, 101);
+  assert.doesNotMatch(JSON.stringify(record), /Raw source|Stored short summary|test-voice/);
+  assert.ok(Object.values(record.steps).every(step => step.status === 'complete'));
+  assert.deepEqual(await handleUpdate({ message: f.voice(3) }, f), { entry_id: last.entry_id, deleted: true });
+  const restarted = await createDiary(f.options);
+  await restarted.processEntry(last.entry_id);
+  assert.equal(f.count('transcribe'), 3);
+  assert.equal(await exists(f.entryDirectory(last)), false);
+  await restarted.deleteLastEntryToday({ entryId: last.entry_id, date: last.date });
+  assert.equal(await exists(f.entryDirectory(first)), true);
+  await restarted.exportAggregates();
+  assert.doesNotMatch(await readFile(join(f.config.dataDir, 'aggregates', 'all-transcripts.md'), 'utf8'), new RegExp(last.entry_id));
+});
+
+test('undo handles empty days, newer receipts, London midnight and summer-time dates without touching older entries', async t => {
+  const f = await fixture(t, '2026-07-01T22:58:00Z', '2026-07-01');
+  const previous = await handleUpdate({ message: f.voice(1, '2026-06-30T12:00:00Z') }, f);
+  assert.deepEqual(await f.app.lastEntryToday(), { status: 'empty' });
+  assert.deepEqual(await f.app.deleteLastEntryToday({ entryId: previous.entry_id, date: previous.date }), { status: 'expired' });
+  const first = await handleUpdate({ message: f.voice(2) }, f);
+  const target = await f.app.lastEntryToday();
+  assert.equal(target.date, '2026-07-01');
+  assert.match(target.received_at, /T23:58:00\+01:00/);
+  const second = await handleUpdate({ message: f.voice(3) }, f);
+  assert.deepEqual(await f.app.deleteLastEntryToday({ entryId: first.entry_id, date: target.date }), { status: 'changed' });
+  f.setNow('2026-07-01T23:00:00Z');
+  assert.deepEqual(await f.app.deleteLastEntryToday({ entryId: second.entry_id, date: second.date }), { status: 'expired' });
+  assert.deepEqual(await f.app.lastEntryToday(), { status: 'empty' });
+  assert.equal(f.count('deleteDrive'), 0);
+  for (const entry of [previous, first, second]) assert.equal(await exists(f.entryDirectory(entry)), true);
+});
+
+test('undo retries partial cloud cleanup after restart and the next daily summary excludes the deleted entry', async t => {
+  const f = await fixture(t);
+  const kept = await handleUpdate({ message: f.voice(1) }, f);
+  const deleted = await handleUpdate({ message: f.voice(2) }, f);
+  f.fault('deleteDrive');
+  f.fault('deleteSheet');
+  assert.deepEqual(await f.app.deleteLastEntryToday({ entryId: deleted.entry_id, date: deleted.date }), { status: 'pending' });
+  assert.equal(await exists(f.entryDirectory(deleted)), false);
+  assert.equal(f.rows.has(deleted.entry_id), true);
+  assert.match(await f.app.status(), /drive_delete: retry/);
+  f.setNow('2026-09-10T02:00:00Z');
+  const restarted = await createDiary(f.options);
+  await restarted.recordPoll();
+  await restarted.retry({ force: true });
+  const dailySources = f.calls.find(call => call.operation === 'summarizeDay').args.transcripts;
+  assert.deepEqual(dailySources.map(entry => entry.entry_id), [kept.entry_id]);
+  assert.equal(f.count('transcribe'), 2);
+  f.faults.clear();
+  await restarted.retry({ force: true });
+  await restarted.retry({ force: true });
+  assert.equal(f.rows.has(deleted.entry_id), false);
+  assert.equal(f.sent.filter(message => message.chatId === 101 && message.text.startsWith('Deleted your entry')).length, 1);
+  assert.equal(f.count('summarizeDay'), 1, 'cleanup must not regenerate the daily summary');
+  assert.equal((await f.day(deleted.date)).entry_count, 1);
+});
+
+test('undo works before transcription and a crash after saving deletion intent resumes without processing that receipt', async t => {
+  const f = await fixture(t);
+  f.fault('transcribe');
+  const entry = await handleUpdate({ message: f.voice() }, f);
+  assert.match((await f.app.lastEntryToday()).preview, /still being processed/);
+  await f.app.deleteLastEntryToday({ entryId: entry.entry_id, date: entry.date });
+  const path = join(f.config.dataDir, 'deletions', `${entry.entry_id}.json`);
+  const deletion = JSON.parse(await readFile(path));
+  for (const step of Object.values(deletion.steps)) step.status = 'pending';
+  await atomicWriteJson(path, deletion);
+  // Recreate an incomplete local directory to simulate a crash between intent
+  // persistence and recursive cleanup, with no valid source metadata left.
+  await atomicWrite(join(f.entryDirectory(entry), 'audio.ogg'), AUDIO);
+  f.faults.clear();
+  const before = f.count('transcribe');
+  await (await createDiary(f.options)).retry({ force: true });
+  assert.equal(f.count('transcribe'), before);
+  assert.equal(await exists(f.entryDirectory(entry)), false);
+  assert.equal((await f.day(entry.date)).entry_count, 0);
+  assert.deepEqual(await f.app.lastEntryToday(), { status: 'empty' });
+});
+
+test('damaged deletion records block redelivery and expose an actionable status issue', async t => {
+  const f = await fixture(t);
+  const entry = await handleUpdate({ message: f.voice() }, f);
+  await atomicWrite(join(f.config.dataDir, 'deletions', `${entry.entry_id}.json`), '{broken');
+  await assert.rejects(f.app.receiveVoice(f.voice()), /metadata needs repair/);
+  assert.deepEqual(await f.app.lastEntryToday(), { status: 'unavailable' });
+  assert.match(await f.app.status(), /invalid_deletion_metadata/);
+  const count = f.count('transcribe');
+  await f.app.retry({ force: true });
+  assert.equal(f.count('transcribe'), count);
+  assert.equal(await exists(f.entryDirectory(entry)), true);
 });

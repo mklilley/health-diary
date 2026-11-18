@@ -11,6 +11,10 @@ function fixture() {
   const config = { adminUserId: 202, diaryUsers: [{ telegramUserId: 101, label: 'Alex' }, { telegramUserId: 202, label: 'Sam' }] };
   const sent = [], calls = [], answers = [], removed = [];
   const faults = new Set();
+  const latestEntries = new Map([101, 202].map(id => [id, {
+    status: 'ready', entry_id: '2026-09-09T13-00-00_000007', date: '2026-09-09',
+    received_at: '2026-09-09T13:00:00+01:00', preview: `Synthetic preview for ${id}`,
+  }]));
   let instant = new Date('2026-09-09T12:00:00Z');
   let queryId = 0;
   const services = { telegram: {
@@ -22,13 +26,15 @@ function fixture() {
     },
     answerCallbackQuery: async (id, text) => { answers.push({ id, text }); if (faults.has('answer')) throw new Error('Private callback failure'); },
     removeKeyboard: async (chatId, messageId) => { removed.push({ chatId, messageId }); if (faults.has('cleanup')) throw new Error('Private cleanup failure'); },
-    setAdminCommands: async id => calls.push(['commands', id]),
+    setCommands: async (id, options) => calls.push(['commands', id, options]),
   } };
   const app = { multiUser: true,
     forUser: async id => {
       calls.push(['forUser', id]);
       if (faults.has(id)) throw new Error('Private diary failure with secret content');
       return {
+        lastEntryToday: async () => { calls.push(['preview', id]); return latestEntries.get(id); },
+        deleteLastEntryToday: async target => { calls.push(['delete', id, target]); return { status: 'complete' }; },
         showDay: async date => { calls.push(['day', id, date]); return `Saved day ${date} for ${id}`; },
         lastDay: async () => { calls.push(['last', id]); return `Latest saved day for ${id}`; },
         status: async () => { calls.push(['status', id]); return `Status for ${id}`; },
@@ -56,12 +62,12 @@ function fixture() {
   const callback = (text, source = latest()) => {
     const button = source.options.replyMarkup.inline_keyboard.flat().find(button => button.text === text);
     assert.ok(button, `Button ${text} exists`);
-    return { id: `query-${++queryId}`, from: { id: 202 }, data: button.callback_data,
-      message: { message_id: source.message_id, date: 1_783_589_600, chat: { id: 202, type: 'private' }, from: { id: 999, is_bot: true } } };
+    return { id: `query-${++queryId}`, from: { id: source.chatId }, data: button.callback_data,
+      message: { message_id: source.message_id, date: 1_783_589_600, chat: { id: source.chatId, type: 'private' }, from: { id: 999, is_bot: true } } };
   };
   const send = (text, id) => handleUpdate({ message: message(text, id) }, context);
   const tap = text => handleUpdate({ callback_query: callback(text) }, context);
-  return { ...context, sent, calls, answers, removed, faults, context, message, latest, callback, send, tap,
+  return { ...context, sent, calls, answers, removed, faults, latestEntries, context, message, latest, callback, send, tap,
     setNow: value => { instant = new Date(value); } };
 }
 
@@ -305,4 +311,90 @@ test('person picker pages preserve IDs and disambiguate identical labels', async
   for (const message of f.sent) for (const button of message.options.replyMarkup?.inline_keyboard.flat() || []) {
     assert.ok(Buffer.byteLength(button.callback_data) <= 64);
   }
+});
+
+test('every diary user can confirm their own undo; admin selection cannot change its owner', async () => {
+  const f = fixture();
+  await f.send('/admin');
+  await f.tap('Alex (101)');
+  for (const id of [202, 101]) {
+    await f.send('/delete_last', id);
+    const menu = f.latest();
+    assert.equal(menu.chatId, id);
+    assert.match(menu.text, new RegExp(`Synthetic preview for ${id}`));
+    assert.match(menu.text, /permanently/);
+    const query = f.callback('Delete');
+    await handleUpdate({ callback_query: query }, f.context);
+    await handleUpdate({ callback_query: query }, f.context);
+    assert.match(f.sent.at(-1).text, /expired/);
+    assert.equal(f.calls.filter(call => call[0] === 'delete' && call[1] === id).length, 1);
+    assert.deepEqual(f.calls.find(call => call[0] === 'delete' && call[1] === id)[2], {
+      entryId: '2026-09-09T13-00-00_000007', date: '2026-09-09',
+    });
+    assert.equal(f.answers.find(answer => answer.id === query.id).text, undefined);
+  }
+});
+
+test('undo cancellation, empty days and old confirmations never delete an entry', async () => {
+  const f = fixture();
+  await f.send('/delete_last', 101);
+  const stale = f.callback('Delete');
+  await f.tap('Cancel');
+  assert.match(f.sent.at(-1).text, /cancelled/);
+  await handleUpdate({ callback_query: stale }, f.context);
+  await f.send('/delete_last', 101);
+  await f.send('/cancel', 101);
+  assert.match(f.sent.at(-1).text, /cancelled/);
+  f.latestEntries.set(101, { status: 'empty' });
+  await f.send('/delete_last', 101);
+  assert.match(f.sent.at(-1).text, /haven't recorded any entries today/);
+  assert.ok(!f.calls.some(call => call[0] === 'delete'));
+});
+
+test('undo rejects forged, foreign, group, removed-user and pre-restart confirmations', async () => {
+  const f = fixture();
+  await f.send('/delete_last', 101);
+  const query = f.callback('Delete');
+  for (const invalid of [
+    { ...query, from: { id: 202 }, message: { ...query.message, chat: { id: 202, type: 'private' } } },
+    { ...query, data: `${query.data}forged` },
+    { ...query, message: { ...query.message, message_id: 999 } },
+    { ...query, from: { id: 101, is_bot: true } },
+    { ...query, message: { ...query.message, chat: { id: -1, type: 'group' } } },
+    { ...query, message: { ...query.message, date: 0 } },
+    { ...query, inline_message_id: 'inline' },
+  ]) await handleUpdate({ callback_query: invalid }, f.context);
+  await handleUpdate({ callback_query: query }, { ...f.context, app: { ...f.app } });
+  assert.match(f.sent.at(-1).text, /expired/);
+  f.config.diaryUsers = f.config.diaryUsers.filter(user => user.telegramUserId !== 101);
+  await handleUpdate({ callback_query: query }, f.context);
+  await f.send('/delete_last', 101);
+  assert.ok(!f.calls.some(call => call[0] === 'delete'));
+});
+
+test('undo consumes confirmation even when keyboard cleanup or the mutation fails', async () => {
+  const f = fixture();
+  await f.send('/delete_last', 101);
+  const query = f.callback('Delete');
+  f.faults.add('cleanup');
+  f.faults.add(101);
+  await handleUpdate({ callback_query: query }, f.context);
+  assert.match(f.sent.at(-1).text, /could not confirm completion/);
+  assert.doesNotMatch(f.sent.at(-1).text, /Private|secret/);
+  f.faults.clear();
+  await handleUpdate({ callback_query: query }, f.context);
+  assert.match(f.sent.at(-1).text, /expired/);
+  assert.ok(!f.calls.some(call => call[0] === 'delete'));
+});
+
+test('Start registers the user’s menu even when they first open the chat after bot startup', async () => {
+  const f = fixture();
+  await f.send('/start', 101);
+  assert.deepEqual(f.calls.at(-1), ['commands', 101, { admin: false, diary: true }]);
+  assert.match(f.sent.at(-1).text, /delete_last/);
+  await f.send('/start', 202);
+  assert.deepEqual(f.calls.at(-1), ['commands', 202, { admin: true, diary: true }]);
+  const count = f.calls.length;
+  await f.send('/start', 303);
+  assert.equal(f.calls.length, count);
 });

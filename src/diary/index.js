@@ -10,6 +10,7 @@ import { receiveVoice, processEntry } from './entries.js';
 import { finaliseDays, sendReminder } from './days.js';
 import { rebuildAggregates, retryAggregateUploads } from './aggregates.js';
 import { rebuildStatus, statusIndex, showDay, lastDay } from './status.js';
+import { lastEntryToday, deleteLastEntryToday, retryDeletions } from './deletions.js';
 
 // Public operations share one writer lock across PM2, timers and manual jobs.
 // Helpers called inside a public operation deliberately do not acquire it again.
@@ -35,7 +36,8 @@ export async function createDiary({ config, services = {}, now = () => new Date(
   return {
     receiveVoice: message => locked(() => receiveVoice(ctx, message)),
     processEntry: entryId => locked(async () => {
-      const { entries } = await store.scan();
+      const { entries, deletions } = await store.scan();
+      if (deletions.some(entry => entry.entry_id === entryId)) return { entry_id: entryId, deleted: true };
       const entry = entries.find(entry => entry.entry_id === entryId);
       if (!entry) throw new Error('Entry not found or metadata needs attention');
       const result = await processEntry(ctx, entry);
@@ -44,6 +46,7 @@ export async function createDiary({ config, services = {}, now = () => new Date(
     }),
     retry: ({ force = false } = {}) => locked(async () => {
       const before = await statusIndex(ctx);
+      await retryDeletions(ctx, { force });
       const { entries } = await store.scan();
       for (const entry of entries) await processEntry(ctx, entry, { force });
       const state = await store.readState();
@@ -69,6 +72,12 @@ export async function createDiary({ config, services = {}, now = () => new Date(
     }),
     showDay: date => locked(() => showDay(ctx, date)),
     lastDay: () => locked(() => lastDay(ctx)),
+    lastEntryToday: () => locked(() => lastEntryToday(ctx)),
+    deleteLastEntryToday: target => locked(async () => {
+      const result = await deleteLastEntryToday(ctx, target);
+      await refresh();
+      return result;
+    }),
     recordPoll: (at = now()) => locked(async () => {
       const state = await store.readState();
       state.last_poll_drained_at = new Date(at).toISOString();

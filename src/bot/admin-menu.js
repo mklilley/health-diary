@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { commandReply, parseCommand } from './commands.js';
-import { adminCallback, isDiaryUser, messageRole } from './access.js';
+import { adminCallback, diaryCallback, isDiaryUser, messageRole } from './access.js';
 import { calendar } from './calendar.js';
 import { localDate, validateDate } from '../util/dates.js';
 import { log, safeError } from '../util/logging.js';
@@ -13,7 +13,10 @@ const diaryCommands = new Set(['today', 'yesterday', 'last', 'day', 'export', 's
 export async function acknowledgeCallback(query, { config, services }) {
   if (typeof query?.id !== 'string' || !query.id) return;
   try {
-    await services.telegram.answerCallbackQuery(query.id, adminCallback(query, config) ? undefined : 'Admin access is required.');
+    const undo = typeof query.data === 'string' && query.data.startsWith('undo:');
+    const allowed = undo ? diaryCallback(query, config) : adminCallback(query, config);
+    await services.telegram.answerCallbackQuery(query.id, allowed ? undefined
+      : undo ? 'Diary access is required.' : 'Admin access is required.');
   } catch (error) { log('telegram_callback_answer_failed', safeError(error)); }
 }
 

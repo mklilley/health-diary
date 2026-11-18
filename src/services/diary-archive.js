@@ -39,8 +39,27 @@ export function createDiaryArchive(config, { drive, auth, sheetsFactory = create
     return sheetsFactory({ ...config, googleSheetId: sheet.id }, { auth });
   }
   return {
-    archive: { rootFolder: async () => (await folderBinding()).drive_folder_id },
-    sheets: Object.fromEntries(['upsertEntry', 'upsertDay', 'ensureTabs']
-      .map(method => [method, async (...args) => (await sheets())[method](...args)])),
+    archive: {
+      rootFolder: async () => (await folderBinding()).drive_folder_id,
+      existingRootFolder: async () => {
+        const binding = await readBinding();
+        const folder = await drive.findFolder(config.googleDriveRootFolderId, String(config.diaryUserId), binding?.drive_folder_id);
+        return folder?.id ?? null;
+      },
+    },
+    sheets: {
+      ...Object.fromEntries(['upsertEntry', 'upsertDay', 'ensureTabs']
+        .map(method => [method, async (...args) => (await sheets())[method](...args)])),
+      deleteEntry: async entryId => {
+        const binding = await readBinding();
+        if (!binding?.spreadsheet_id) return;
+        // Validate the existing archive binding, without provisioning new objects.
+        const folder = await drive.findFolder(config.googleDriveRootFolderId, String(config.diaryUserId), binding.drive_folder_id);
+        const sheet = await drive.findSpreadsheet(binding.drive_folder_id, 'Diary Index', binding.spreadsheet_id);
+        if (!sheet) return;
+        if (!folder) throw new ServiceError('drive', 'DIARY_ARCHIVE_INVALID');
+        return sheetsFactory({ ...config, googleSheetId: binding.spreadsheet_id }, { auth }).deleteEntry(entryId);
+      },
+    },
   };
 }

@@ -46,6 +46,7 @@ sudo journalctl -u health-diary-daily.service -n 50 --no-pager
 | `data/users/<ID>/status/index.json` | Rebuildable status cache |
 | `data/users/<ID>/state.json` | Diary owner, start date and alert reservations |
 | `data/users/<ID>/archive.json` | Stable Drive folder and Sheet IDs |
+| `data/users/<ID>/deletions/<entry-id>.json` | Deletion progress and IDs preventing reprocessing; no recording or diary text |
 | `data/polling.json` | Shared polling health and connection-alert reservations |
 | `data/directory.json` | Generated owner-label file IDs, hashes and sync errors |
 | `data/telegram.json` | Durable Telegram update offset |
@@ -70,6 +71,8 @@ The application uses plain JavaScript, the OpenAI and Google API clients, and a 
 
 Failed work survives a restart. Saved transcripts and summaries are reused. Drive reconciles uploads by name, ID and checksum; Sheets checks entry IDs or dates before appending. An AI request may be repeated if its response was lost before being saved.
 
+Confirmed `/delete_last` requests exclude that entry from diary reads, processing and future exports immediately. File cleanup and the Sheets row deletion are retried until complete; **Status** shows unfinished deletion steps and the admin's **Retry pending** can retry them immediately. Deletion records must be retained to prevent replayed Telegram messages from recreating an entry. Existing aggregate snapshots, including queued uploads, stay unchanged until another export is requested.
+
 Transient errors get three immediate attempts by default, then scheduled retries. Persistent failures escalate after an hour; authentication or configuration errors escalate sooner. Shared provider problems produce one admin alert and a resolution message after recovery.
 
 Run one installation against each bot token and archive. Bot and scheduled jobs must share the same local data directory and Unix account. Filesystem locks update every ten seconds and become reclaimable two minutes after a crash. Do not remove a live lock or place the data directory on a network filesystem.
@@ -78,7 +81,7 @@ Ordinary logs omit health content and secrets. Explicit day-view commands and so
 
 ## Reminder and daily-summary rules
 
-- A received voice note counts towards its sender's reminder even if processing fails. Text and admin commands do not count.
+- A received voice note counts towards its sender's reminder even if processing fails. Deleted entries, text and admin commands do not count.
 - Reminders send only between 22:00 and midnight on the current London date, after a recent successful poll. A previous day's missed reminder is not sent the next morning.
 - Daily summaries use all full transcripts in received order. Incomplete transcription or an undrained Telegram backlog delays finalisation.
 - Catch-up begins at the saved diary start date. Zero-entry days complete without an AI call.
@@ -124,7 +127,7 @@ Preserve attempts and every source/AI step. Save valid JSON atomically, then res
 
 ## Restoring a lost data directory
 
-Stop all writers. Restore each archived `entries/` and `days/` tree into its owner's `data/users/<ID>/`, preserving filenames. Restore the user registry, ownership state, archive bindings and shared Telegram state from a trusted backup, and credentials separately. Inspect metadata, Drive IDs, start dates and delivery reservations before reconnecting. Rebuild status, then retry. Use `/export` when you next need combined files.
+Stop all writers. Restore each archived `entries/` and `days/` tree into its owner's `data/users/<ID>/`, preserving filenames. Restore the user registry, ownership state, archive bindings, each diary's `deletions/` records and shared Telegram state from a trusted backup, and credentials separately. Exclude entries listed in deletion records from restored source folders; reconcile any deletions made after the backup before reconnecting. Inspect metadata, Drive IDs, start dates and delivery reservations. Rebuild status, then retry. Use `/export` when you next need combined files.
 
 Remote metadata is a snapshot and may lag local delivery reservations. Review uncertain sends before resuming. There is no automated disaster-restore command, and Drive cannot recover files that never uploaded.
 

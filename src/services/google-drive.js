@@ -29,6 +29,15 @@ export function createDriveService(config, { auth, client = google.drive({ versi
       || !file.parents?.includes(parentId)) throw new ServiceError('drive', 'REMOTE_OBJECT_CONFLICT');
   };
   const get = async (fileId) => (await client.files.get({ fileId, fields: FILE_FIELDS }, options)).data;
+  const missing = error => Number(error?.response?.status ?? error?.status ?? error?.code) === 404;
+  const findObject = async (parentId, name, fileId, mimeType) => {
+    let file;
+    try { file = fileId ? await get(fileId) : await find(parentId, name); }
+    catch (error) { if (!missing(error)) throw error; return null; }
+    if (file) assertTarget(file, parentId, name, mimeType);
+    return file;
+  };
+  const findFolder = (parentId, name, fileId) => findObject(parentId, name, fileId, FOLDER_MIME);
   const reference = (file) => ({ id: file.id, webViewLink: file.webViewLink || `https://drive.google.com/file/d/${file.id}/view` });
   const ensureObject = (parentId, name, mimeType, fileId) => guarded('drive', async () => {
     const existing = fileId ? await get(fileId) : await find(parentId, name);
@@ -43,6 +52,24 @@ export function createDriveService(config, { auth, client = google.drive({ versi
     return { id: data.id };
   });
   return {
+    findFolder: (parentId, name, fileId) => guarded('drive', () => findFolder(parentId, name, fileId)),
+    findSpreadsheet: (parentId, name, fileId) => guarded('drive', () => findObject(parentId, name, fileId, SHEET_MIME)),
+    deleteEntryFolder: ({ rootFolderId, date, entryId, folderId }) => guarded('drive', async () => {
+      // Verify the full parent chain before permanently deleting this one entry.
+      const entries = rootFolderId && await findFolder(rootFolderId, 'entries');
+      const day = entries && await findFolder(entries.id, date);
+      if (!day) {
+        if (folderId) {
+          try { if (await get(folderId)) throw new ServiceError('drive', 'REMOTE_OBJECT_CONFLICT'); }
+          catch (error) { if (!missing(error)) throw error; }
+        }
+        return;
+      }
+      const target = await findFolder(day.id, entryId, folderId);
+      if (!target) return;
+      try { await client.files.delete({ fileId: target.id }, options); }
+      catch (error) { if (!missing(error)) throw error; }
+    }),
     ensureFolder: (parentId, name, fileId) => ensureObject(parentId, name, FOLDER_MIME, fileId),
     ensureSpreadsheet: (parentId, name, fileId) => ensureObject(parentId, name, SHEET_MIME, fileId),
     putFile: ({ parentId, name, path, mimeType, fileId, mutable = false }) => guarded('drive', async () => {

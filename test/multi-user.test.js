@@ -52,6 +52,21 @@ async function fixture(t) {
     },
     drive: {
       ensureFolder: ensure, ensureSpreadsheet: ensure,
+      findFolder: async (parent, name, id) => {
+        const object = id ? [...objects.values()].find(item => item.id === id) : objects.get(`${parent}/${name}`);
+        if (object) assert.ok(object.parent === parent && object.name === name);
+        return object ?? null;
+      },
+      findSpreadsheet: async (parent, name, id) => services.drive.findFolder(parent, name, id),
+      deleteEntryFolder: async ({ rootFolderId, date, entryId, folderId }) => {
+        const entries = objects.get(`${rootFolderId}/entries`);
+        const day = entries && objects.get(`${entries.id}/${date}`);
+        const entry = day && objects.get(`${day.id}/${entryId}`);
+        if (!entry) return;
+        if (folderId) assert.equal(entry.id, folderId);
+        for (const [key, file] of files) if (file.parentId === entry.id) files.delete(key);
+        objects.delete(`${day.id}/${entryId}`);
+      },
       putFile: async ({ parentId, name, path, fileId }) => {
         const key = `${parentId}/${name}`;
         const saved = files.get(key);
@@ -66,6 +81,7 @@ async function fixture(t) {
     const id = scoped.googleSheetId;
     if (!sheets.has(id)) sheets.set(id, { entries: new Map(), days: new Map() });
     return {
+      deleteEntry: async entryId => { sheets.get(id).entries.delete(entryId); },
       upsertEntry: async row => { sheets.get(id).entries.set(row.entryId, row); return { row: 2 }; },
       upsertDay: async row => { sheets.get(id).days.set(row.date, row); return { row: 2 }; },
     };
@@ -113,6 +129,43 @@ test('same entry IDs in different chats retain separate sources, Drive folders, 
   assert.equal(f.sent.filter(message => message.text.startsWith('Recorded')).length, 2);
   assert.equal(f.sheets.size, 2);
   assert.ok(![...f.files.values()].some(file => file.name.startsWith('all-')), 'ordinary processing must not generate exports');
+});
+
+test('real multi-user undo removes only its sender’s entry despite identical IDs and another admin selection', async t => {
+  const f = await fixture(t);
+  const alex = await handleUpdate({ message: f.voice(101) }, f);
+  const sam = await handleUpdate({ message: f.voice(202) }, f);
+  assert.equal(alex.entry_id, sam.entry_id);
+  const alexPath = f.userPath(101, 'entries', alex.date, alex.entry_id, 'transcript.md');
+  const original = await readFile(alexPath);
+  const originalMeta = await readFile(f.userPath(101, 'entries', alex.date, alex.entry_id, 'metadata.json'));
+  const send = (text, id = 202) => handleUpdate({ message: { ...f.voice(id), voice: undefined, text } }, f);
+  const tap = async label => {
+    const menu = f.sent.at(-1);
+    const button = menu.options.replyMarkup.inline_keyboard.flat().find(button => button.text === label);
+    return handleUpdate({ callback_query: { id: 'query', from: { id: menu.chatId }, data: button.callback_data,
+      message: { message_id: f.sent.length, date: 1, chat: { id: menu.chatId, type: 'private' } } } }, f);
+  };
+  await send('/admin');
+  await tap('Alex (101)');
+  await send('/delete_last');
+  assert.equal(f.sent.at(-1).chatId, 202);
+  await tap('Delete');
+  assert.equal(await exists(f.userPath(202, 'entries', sam.date, sam.entry_id)), false);
+  assert.deepEqual(await readFile(alexPath), original);
+  assert.deepEqual(await readFile(f.userPath(101, 'entries', alex.date, alex.entry_id, 'metadata.json')), originalMeta);
+  for (const id of [101, 202]) {
+    const binding = await readJson(f.userPath(id, 'archive.json'));
+    assert.equal(f.sheets.get(binding.spreadsheet_id).entries.size, id === 101 ? 1 : 0);
+  }
+  await send('/delete_last', 101);
+  await tap('Delete');
+  assert.equal(await exists(alexPath), false);
+  assert.equal(f.summaries.length, 0);
+  assert.equal(f.sent.filter(message => message.text.startsWith('Deleted your entry')).length, 2);
+  const restarted = await createMultiDiary(f.options);
+  assert.deepEqual(await restarted.receiveVoice(f.voice(101)), { entry_id: alex.entry_id, deleted: true });
+  assert.deepEqual(await restarted.receiveVoice(f.voice(202)), { entry_id: sam.entry_id, deleted: true });
 });
 
 test('bot backlog preserves both owners even when entry IDs collide and shares one durable cursor', async t => {

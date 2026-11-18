@@ -12,7 +12,9 @@ export async function receiveVoice(ctx, message) {
   if (message?.from?.id !== config.diaryUserId || message.chat?.type !== 'private' || message.chat.id !== config.diaryUserId
     || !Number.isSafeInteger(message.message_id) || message.message_id <= 0 || !Number.isSafeInteger(message.date)
     || !message.voice?.file_id || typeof message.voice.file_id !== 'string') throw new Error('Invalid diary voice message');
-  const { entries, issues } = await store.scan();
+  const { entries, issues, deletions } = await store.scan();
+  const deleted = deletions.find(entry => entry.telegram_message_id === message.message_id);
+  if (deleted) return { entry_id: deleted.entry_id, deleted: true };
   const old = entries.find(entry => entry.telegram_user_id === message.from.id && entry.telegram_message_id === message.message_id);
   if (old) return old;
   const { entryId, receivedAt, date } = entryIdentity(message);

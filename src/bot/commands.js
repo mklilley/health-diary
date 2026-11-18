@@ -1,6 +1,6 @@
 import { addDays, localDate, validateDate } from '../util/dates.js';
 
-export const DIARY_USER_HELP = 'Send a voice note about what you have eaten and how you have been feeling. I will keep the recording and reply with a short summary. Send corrections as a new voice note. Text messages are not added to your diary.';
+export const DIARY_USER_HELP = 'Send a voice note about what you have eaten and how you have been feeling. I will keep the recording and reply with a short summary. To undo your latest entry from today, choose Delete last entry in the menu or send /delete_last. You will be asked to confirm. Send other corrections as a new voice note. Text messages are not added to your diary.';
 export const ADMIN_HELP = [
   'Health Diary admin commands:',
   '/status — current operational status',

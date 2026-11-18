@@ -5,6 +5,7 @@ import { validateDate, localDate } from '../util/dates.js';
 
 export const entrySteps = ['telegram_audio_download', 'transcription', 'entry_summary', 'drive_audio', 'drive_transcript', 'drive_summary', 'sheet_entry', 'telegram_acknowledgement', 'drive_metadata'];
 export const daySteps = ['daily_summary', 'drive_summary', 'sheet_day', 'drive_metadata'];
+export const deletionSteps = ['local_delete', 'drive_delete', 'sheet_delete', 'telegram_deletion_notice'];
 export const pendingStep = () => ({ status: 'pending', attempts: 0 });
 export const makeSteps = keys => Object.fromEntries(keys.map(key => [key, pendingStep()]));
 const states = new Set(['pending', 'running', 'retry', 'attention', 'complete']);
@@ -30,9 +31,29 @@ export function createStore(config, now) {
     catch (error) { if (error.code === 'ENOENT') return []; throw error; }
   }
   async function scan() {
-    const entries = [], days = [], issues = [];
+    const entries = [], days = [], issues = [], deletions = [];
+    const deletedIds = new Set();
+    let deletionFiles;
+    try { deletionFiles = await readdir(join(root, 'deletions')); }
+    catch (error) { if (error.code !== 'ENOENT') throw error; deletionFiles = []; }
+    for (const name of deletionFiles.filter(name => name.endsWith('.json'))) {
+      const id = name.slice(0, -5);
+      // Even a damaged deletion record must prevent reprocessing its source.
+      deletedIds.add(id);
+      try {
+        const deletion = await readJson(join(root, 'deletions', name));
+        if (!entryPattern.test(id) || deletion.schema_version !== 1 || deletion.entry_id !== id
+          || !validateDate(deletion.date) || id.slice(0, 10) !== deletion.date
+          || deletion.telegram_user_id !== config.diaryUserId
+          || !Number.isSafeInteger(deletion.telegram_message_id) || deletion.telegram_message_id <= 0
+          || !id.endsWith(`_${String(deletion.telegram_message_id).padStart(6, '0')}`)
+          || !validSteps(deletion, deletionSteps)) throw new Error('Invalid deletion record');
+        deletions.push(deletion);
+      } catch { issues.push({ date: id.slice(0, 10), id, operation: 'invalid_deletion_metadata' }); }
+    }
     for (const date of (await directories(join(root, 'entries'))).filter(validateDate)) {
       for (const id of await directories(join(root, 'entries', date))) {
+        if (deletedIds.has(id)) continue;
         if (!entryPattern.test(id)) { issues.push({ date, id: date, operation: 'unrecognised_entry_directory' }); continue; }
         try {
           const entry = await readJson(join(root, 'entries', date, id, 'metadata.json'));
@@ -63,10 +84,11 @@ export function createStore(config, now) {
       } catch { issues.push({ date, id: date, operation: 'invalid_day_metadata' }); }
     }
     entries.sort((a, b) => Date.parse(a.received_at) - Date.parse(b.received_at) || a.telegram_message_id - b.telegram_message_id);
-    return { entries, days, issues };
+    return { entries, days, issues, deletions };
   }
   const writeEntry = entry => atomicWriteJson(join(entryPath(entry), 'metadata.json'), entry);
   const writeDay = day => atomicWriteJson(join(dayPath(day), 'metadata.json'), day);
+  const writeDeletion = deletion => atomicWriteJson(join(root, 'deletions', `${deletion.entry_id}.json`), deletion);
   async function getDay(date) {
     if (!validateDate(date)) throw new Error('Invalid calendar date');
     const day = await readJson(join(dayPath(date), 'metadata.json'), null);
@@ -97,7 +119,7 @@ export function createStore(config, now) {
     for (const name of ['entries', 'days', 'aggregates', 'status']) await mkdir(join(root, name), { recursive: true, mode: 0o700 });
     return state;
   }
-  return { root, entryPath, dayPath, scan, writeEntry, writeDay, getDay, init,
+  return { root, entryPath, dayPath, scan, writeEntry, writeDay, writeDeletion, getDay, init,
     readState: () => readJson(join(root, 'state.json')),
     readPollingState: () => readJson(config.pollingStateFile || join(root, 'state.json')),
     writeState: state => atomicWriteJson(join(root, 'state.json'), state) };

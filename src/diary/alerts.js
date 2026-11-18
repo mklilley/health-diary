@@ -6,7 +6,7 @@ function incidentKey(meta, key, step) {
   // One provider outage can fail several files and several entries. Notify once
   // for that shared problem; individual uncertain messages remain separate.
   if (step.ambiguous_delivery) return `telegram:${meta.entry_id || meta.date}:${key}`;
-  const service = key.startsWith('drive_') || key.endsWith('.md') ? 'Google Drive'
+  const service = key === 'local_delete' ? 'Local files' : key.startsWith('drive_') || key.endsWith('.md') ? 'Google Drive'
     : key.startsWith('sheet_') ? 'Google Sheets' : key.startsWith('telegram_') ? 'Telegram'
       : key === 'daily_summary' && step.last_error?.type === 'dependency' ? 'Daily sources' : 'OpenAI';
   return `${service}:${step.last_error?.code || 'OPERATION_FAILED'}`;
@@ -18,10 +18,10 @@ export async function updateAlerts(ctx, meta, save) {
   await save(meta);
   const state = await ctx.store.readState();
   state.notifications ||= {};
-  const { entries, days, issues } = await ctx.store.scan();
+  const { entries, days, issues, deletions = [] } = await ctx.store.scan();
   let aggregates;
   try { aggregates = await readJson(join(ctx.store.root, 'aggregates', 'metadata.json'), null); } catch { /* Status reports corrupt derived state. */ }
-  const records = [...entries, ...days, state, ...(aggregates?.upload_requested === true && aggregates.steps ? [aggregates] : [])];
+  const records = [...entries, ...days, ...deletions, state, ...(aggregates?.upload_requested === true && aggregates.steps ? [aggregates] : [])];
   const active = new Map();
   if (issues.length) active.set('Local files:LOCAL_SOURCE_INVALID', issues.map(issue => `${issue.id}: ${issue.operation}`));
   for (const day of days) {

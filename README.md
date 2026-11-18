@@ -59,15 +59,15 @@ The bot runs until you stop it with Ctrl-C. For continuous operation, automatic 
 
 ## Using the diary
 
-Only approved users' **voice notes** create entries. Recordings always belong to the sender, including an administrator listed in `users.json`. Text messages are not diary entries. Send corrections as new voice notes; previous entries stay unchanged.
+Only approved users' **voice notes** create entries. Recordings always belong to the sender, including an administrator listed in `users.json`. Text messages are not diary entries. To undo your latest entry from today, choose **Delete last entry today** in Telegram's menu and confirm. This removes its local and Drive files and its Sheets row. Send other corrections as new voice notes.
 
 With scheduled jobs installed, the bot checks for a no-entry reminder from **22:00** and summarises the previous day from **02:00**, London time. Processing or downtime can delay completion.
 
-Open **admin** from Telegram's command menu (or send `/admin`), choose a person, and use **Today**, **Latest day**, **Choose date**, **Export**, **Status** or **Retry pending**. **Switch person** changes the selection; **Close** clears it. Ordinary users only record entries. [Menu and configuration details](docs/multi-user.md).
+Administrators can open **admin** from Telegram's command menu (or send `/admin`), choose a person, and use **Today**, **Latest day**, **Choose date**, **Export**, **Status** or **Retry pending**. **Switch person** changes the selection; **Close** clears it. [Menu and configuration details](docs/multi-user.md).
 
 **Latest day** skips empty days. It shows the completed daily summary when available, otherwise the saved entry summaries with processing still pending marked.
 
-Use **Export** when you need that person's saved transcripts and summaries together for analysis. It makes no AI calls. Combined files stay unchanged until the next export; individual records and daily summaries continue to be saved automatically.
+Use **Export** when you need that person's saved transcripts and summaries together for analysis. It makes no AI calls. Combined files stay unchanged until the next export, including after deleting an entry; individual records and daily summaries continue to be saved automatically.
 
 ## Privacy and storage
 

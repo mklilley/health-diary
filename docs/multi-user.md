@@ -31,10 +31,18 @@ Scheduled jobs visit each configured diary and report failures per person. A fai
 
 Open **admin** from Telegram's command menu, or send `/admin`. Tap a person's label and ID, then use **Today**, **Latest day**, **Choose date**, **Export**, **Status** or **Retry pending**. Choose date opens a calendar with month navigation; typing `YYYY-MM-DD` there also works. Every result identifies the diary, including each part of a long reply.
 
-**Retry pending** tries unfinished processing and uploads for the selected diary immediately. Completed steps are skipped. Scheduled jobs also retry automatically.
+**Retry pending** tries unfinished processing, uploads and deletion cleanup for the selected diary immediately. Completed steps are skipped. Scheduled jobs also retry automatically.
 
-**Switch person** returns to the list. **Close** (or `/cancel`) clears the admin selection; it does not delete records or disable voice recording. Voice notes always belong to the sender, even while viewing someone else's diary. Admins need an entry in `users.json` to record voice notes themselves.
+**Switch person** returns to the list. **Close** clears the admin selection; it does not delete records or disable voice recording. `/cancel` cancels an open deletion confirmation, or otherwise closes the admin controls. Voice notes always belong to the sender, even while viewing someone else's diary. Admins need an entry in `users.json` to record voice notes themselves.
 
 The existing `/today`, `/yesterday`, `/last`, `/day`, `/status`, `/retry` and `/export` shortcuts work for the selected diary only. Without a selection they open the person picker. Old buttons expire after navigating to a new menu. Restarting the bot clears the selection too; open `/admin` again. Ordinary users have no access to these controls.
 
 The menu uses [Telegram inline keyboards](https://core.telegram.org/bots/api#inlinekeyboardmarkup). Buttons are acknowledged when received and checked against the current admin, diary and menu before any action. Their removal from old messages is best effort; stale buttons remain invalid even if Telegram could not remove them.
+
+## Undoing today's latest entry
+
+Every approved diary user has **Delete last entry today** in Telegram's command menu (or `/delete_last`). It previews the sender's latest entry from the current Europe/London date and offers **Delete** and **Cancel**. If there are no entries today, it says so. Admin selection never changes whose entry is deleted: this always applies to the sender's own diary.
+
+Confirmation permanently removes the entry's local folder, its Drive folder (audio, transcript, summary and metadata), and its Sheets row. It also works for an entry that has not finished processing. The confirmation expires if a newer entry arrives, the London date changes, or the bot restarts. Previous days and completed daily summaries are not changed.
+
+If cleanup cannot finish, the bot reports it as queued and retries automatically. It sends a completion message once the files and row have been removed. Existing aggregate exports, Telegram messages and independent backups remain unchanged. An administrator can select **Export** again to replace the combined files with a snapshot that excludes the deleted entry. No PM2 or cron pause is needed to use this feature.
